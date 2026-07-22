@@ -1,0 +1,66 @@
+root = true
+
+[*]
+end_of_line = lf
+
+[*.cs]
+
+# IDE0161 (namespace declaration preference) — file-scoped namespaces are the default.
+# `namespace X;` instead of `namespace X { ... }`, one less indent level for every file.
+# Every hand-written file in the project already follows this; this setting is what makes
+# Visual Studio scaffold NEW files the same way, and flags any file that reverts to the
+# old block-scoped style. (Doesn't apply to the generated Migrations files below.)
+# https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/proposals/csharp-10.0/file-scoped-namespaces
+csharp_style_namespace_declarations = file_scoped:warning
+
+# SS033 (SharpSource: async overload available) — disabled by design.
+# EF Core's DbSet.Add is the recommended call. The async AddAsync overload exists
+# ONLY to support value generators that hit the database to produce a key (e.g. the
+# SQL Server HiLo generator). We do not use those, so sync Add is correct and the
+# async nudge is noise. Re-enable locally if a HiLo/sequence value generator is added.
+# https://learn.microsoft.com/en-us/dotnet/api/microsoft.entityframeworkcore.dbset-1.addasync
+dotnet_diagnostic.SS033.severity = none
+
+# MA0038 (Meziantou: make method static) — disabled because the rule is deprecated
+# (its own message says "use CA1822 instead"). It also misfires on methods that use a
+# captured primary-constructor parameter: HotelExistsAsync/CountryExistsAsync reference
+# the injected DbContext, so they cannot be static. CA1822 stays correctly silent here.
+# https://github.com/meziantou/Meziantou.Analyzer/blob/main/docs/Rules/MA0038.md
+dotnet_diagnostic.MA0038.severity = none
+
+# MA0018 (Meziantou: do not declare static members on generic types) — disabled because
+# the rule is deprecated (its own docs say "use CA1000 instead"). Its built-in equivalent
+# CA1000 is also suppressed below; see that entry for the rationale.
+# https://github.com/meziantou/Meziantou.Analyzer/blob/main/docs/Rules/MA0018.md
+dotnet_diagnostic.MA0018.severity = none
+
+# CA1000 (do not declare static members on generic types) — intentionally suppressed.
+# Result<T> exposes static factory methods (Success/Failure) by design; this is the standard
+# factory pattern used by every Result-type library, and the instance helpers (Map/Bind)
+# depend on them. The flagged Result<T>.Success(...) call site is exactly the API we want.
+# This is an ergonomics rule, not a correctness issue.
+# https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca1000
+dotnet_diagnostic.CA1000.severity = none
+
+# MA0004 (Meziantou: use ConfigureAwait) — disabled for ASP.NET Core apps.
+# ASP.NET Core has no SynchronizationContext, so ConfigureAwait(false) has zero
+# runtime effect here. The rule exists for reusable library code; applying it to
+# application-level controllers adds noise with no benefit.
+# https://github.com/meziantou/Meziantou.Analyzer/issues/417
+dotnet_diagnostic.MA0004.severity = none
+
+# S125 (SonarAnalyzer: remove commented-out code) — disabled project-wide. The rule
+# pattern-matches comment *text* against shapes that look like statements, so narrative
+# comments explaining WHY (the project's own comment style) repeatedly trip it as false
+# positives. Rewording around every false positive was tried first and did not scale;
+# disabling is the pragmatic call. Real commented-out dead code should still be deleted
+# on sight in review — git history is the record, not a comment block — this setting
+# only stops the analyzer from being the enforcement mechanism for that.
+# https://rules.sonarsource.com/csharp/rspec-125/
+dotnet_diagnostic.S125.severity = none
+
+# EF Core migrations are tool-generated. Per project policy all analyzer diagnostics are
+# disabled for these files — we do not hand-edit generated migration code.
+[**/Migrations/*.cs]
+generated_code = true
+dotnet_analyzer_diagnostic.severity = none

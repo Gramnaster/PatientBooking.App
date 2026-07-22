@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+    <File Path=".gitattributes" />
+    <File Path=".gitignore" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+  </Folder>
+  <Project Path="PatientBooking.Api.Application/PatientBooking.Api.Application.csproj" />
+  <Project Path="PatientBooking.Api.Common/PatientBooking.Api.Common.csproj" />
+  <Project Path="PatientBooking.Api.Domain/PatientBooking.Api.Domain.csproj" />
+  <Project Path="PatientBooking.Api/PatientBooking.Api.csproj" />
+</Solution>

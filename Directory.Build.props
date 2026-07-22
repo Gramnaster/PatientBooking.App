@@ -1,0 +1,30 @@
+<Project>
+  <!-- 1. Global Compiler Settings -->
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    
+    <!-- HOTFIX: Split Level (Version) and Mode (Strictness) -->
+    <AnalysisLevel>latest</AnalysisLevel>
+    <AnalysisMode>recommended</AnalysisMode>
+    
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors> 
+  </PropertyGroup>
+
+  <!-- 2. Global Analyzers (Applied to non-test projects only) -->
+  <!-- Versions come from Directory.Packages.props (Central Package Management). Every analyzer
+       lives here, not per-project, so adding one is a one-line change instead of four. -->
+  <ItemGroup Condition="!$(MSBuildProjectName.Contains('Test'))">
+    <PackageReference Include="SonarAnalyzer.CSharp">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Roslynator.Analyzers" PrivateAssets="all" />
+    <PackageReference Include="Meziantou.Analyzer" PrivateAssets="all" />
+    <PackageReference Include="AsyncFixer" PrivateAssets="all" />
+    <PackageReference Include="IDisposableAnalyzers" PrivateAssets="all" />
+    <PackageReference Include="SharpSource" PrivateAssets="all" />
+    <PackageReference Include="ErrorProne.NET.CoreAnalyzers" PrivateAssets="all" />
+  </ItemGroup>
+</Project>
