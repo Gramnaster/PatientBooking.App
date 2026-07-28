@@ -1,10 +1,18 @@
 <Solution>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
+    <File Path=".env.example" />
     <File Path=".gitattributes" />
     <File Path=".gitignore" />
     <File Path="Directory.Build.props" />
     <File Path="Directory.Packages.props" />
+    <File Path="docker-compose.yml" />
+    <File Path="Dockerfile" />
+  </Folder>
+  <Folder Name="/Solution Items/Docker/">
+    <File Path="docker/.env.dev" />
+    <File Path="docker/.env.dev.example" />
+    <File Path="docker/dev.compose.yaml" />
   </Folder>
   <Project Path="PatientBooking.Api.Application/PatientBooking.Api.Application.csproj" />
   <Project Path="PatientBooking.Api.Common/PatientBooking.Api.Common.csproj" />

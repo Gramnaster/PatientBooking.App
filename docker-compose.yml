@@ -1,0 +1,45 @@
+# VPS deploy shape - a single Docker host running both containers, no orchestrator, no Azure
+# dependency. `docker compose up -d` after pulling ghcr.io's built image (see
+# .github/workflows/ci-cd.yml) is the whole deploy.
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    # Drop this port mapping entirely once nothing outside the Docker network needs direct DB
+    # access - the api service below reaches it over the internal Compose network regardless.
+    ports:
+      - "1435:1433"
+
+  api:
+    # image + build together: `docker compose up --build` (local dev) builds and tags this image
+    # locally; `docker compose pull` (the VPS, see .github/workflows/ci-cd.yml) instead pulls this
+    # exact tag from GHCR - lowercase because GHCR requires an all-lowercase image path, unlike
+    # this repo's actual (mixed-case) name.
+    image: ghcr.io/jpv-metromart/patientbooking.app:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - sqlserver
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__HotelListingDbConnectionString: "Server=sqlserver,1433;Database=PatientBookingDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
+      JwtSettings__Key: ${JWT_SETTINGS_KEY}
+      EmailSettings__Username: ${EMAIL_SETTINGS_USERNAME}
+      EmailSettings__Password: ${EMAIL_SETTINGS_PASSWORD}
+      Authentication__Google__ClientId: ${GOOGLE_CLIENT_ID}
+    ports:
+      - "8080:8080"
+      # No TLS in this container - UseHttpsRedirection()/UseHsts() in Program.cs expect a reverse
+      # proxy (Caddy is the simplest option - automatic Let's Encrypt certs in a few lines of
+      # Caddyfile; Nginx+certbot is the other common choice) terminating HTTPS in front of this
+      # port. Not included here - add one before exposing this port past your VPS's firewall.
+
+volumes:
+  sqlserver-data:

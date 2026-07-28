@@ -1,0 +1,88 @@
+# Local dev infrastructure only - NOT the production deploy shape.
+# The API itself runs on the host via `dotnet run`/`dotnet watch`; this file just gives it
+# something to talk to. See ../docker-compose.yml for the VPS deploy compose (api + sqlserver,
+# built from the root Dockerfile) - that one is unrelated to this one.
+#
+# Usage (from repo root):
+#   copy docker/.env.dev.example to docker/.env.dev and adjust if the defaults collide with
+#   something else already running, then:
+#
+#   docker compose -f docker/dev.compose.yaml --env-file docker/.env.dev --profile sqlserver up -d
+#
+# Swap/add profiles for whatever this project needs:
+#   --profile postgres   instead of/alongside sqlserver, if the project targets Postgres
+#   --profile rabbitmq   adds RabbitMQ + its management UI
+# Seq and smtp4dev have no profile - they're cheap enough to always run.
+name: patientbooking-app-dev
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    profiles: ["sqlserver"]
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-YourStrong@Passw0rd}
+    ports:
+      - "${SQLSERVER_PORT:-1433}:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:17-alpine
+    profiles: ["postgres"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  seq:
+    image: datalust/seq:latest
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      # Local dev only - skips the admin login instead of requiring SEQ_FIRSTRUN_ADMINPASSWORD.
+      SEQ_FIRSTRUN_NOAUTHENTICATION: "True"
+    ports:
+      - "${SEQ_UI_PORT:-5341}:80"
+    volumes:
+      - seq-data:/data
+
+  smtp4dev:
+    image: rnwood/smtp4dev
+    restart: unless-stopped
+    ports:
+      - "${SMTP_PORT:-2525}:25"
+      - "${SMTP_UI_PORT:-5000}:80"
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    profiles: ["rabbitmq"]
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_UI_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+volumes:
+  sqlserver-data:
+  postgres-data:
+  seq-data:
+  rabbitmq-data:

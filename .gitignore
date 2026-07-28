@@ -6,6 +6,13 @@
 # docker-compose secrets (see .env.example for the template) - never commit real values
 .env
 
+# local dev-infra compose secrets (see docker/.env.dev.example for the template)
+docker/.env.dev
+
+# ASP.NET Core Data Protection key ring (PersistKeysToFileSystem) - unencrypted-at-rest key
+# material for PersonalDataProtector; committing it would defeat the PII-encryption-at-rest purpose
+**/keys/
+
 # User-specific files
 *.rsuser
 *.suo

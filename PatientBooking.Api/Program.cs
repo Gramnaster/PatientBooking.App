@@ -1,7 +1,9 @@
+using Microsoft.EntityFrameworkCore;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using PatientBooking.Api.Domain;
 using Serilog;
 using Serilog.Enrichers.Span;
 using Serilog.Events;
@@ -45,6 +47,15 @@ try
         .UseOtlpExporter();
 
     // Add services to the container.
+    var connectionString = builder.Configuration.GetConnectionString("PatientBookingDbConnectionString");
+    if (string.IsNullOrWhiteSpace(connectionString))
+    {
+        Log.Fatal("ConnectionStrings:PatientBookingDbConnectionString is not configured.");
+        throw new InvalidOperationException("ConnectionStrings:PatientBookingDbConnectionString is not configured");
+    }
+
+    builder.Services.AddDbContext<PatientBookingDbContext>(options =>
+        options.UseSqlServer(builder.Configuration.GetConnectionString("PatientBookingDbConnectionString")));
 
     builder.Services.AddControllers();
     // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
