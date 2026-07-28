@@ -1,9 +1,55 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+	<TargetFramework>net10.0</TargetFramework>
+	<ImplicitUsings>enable</ImplicitUsings>
+	<Nullable>enable</Nullable>
+	<TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+	<WarningLevel>9999</WarningLevel>
+	<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+	<!-- AnalysisLevel/AnalysisMode inherited from Directory.Build.props (latest / recommended) -->
+	<EnableNETAnalyzers>true</EnableNETAnalyzers>
+
+	<GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
+
+	<!-- This layer talks to ASP.NET Core hosting types (IHttpContextAccessor, IOptions<T>) and
+	   Identity (UserManager<T>) without being a Web SDK project itself - FrameworkReference is
+	   what makes those resolve. -->
+	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+		<PackageReference Include="Dapper" />
+		<PackageReference Include="FluentValidation" />
+		<PackageReference Include="Google.Apis.Auth" />
+		<PackageReference Include="MailKit" />
+		<PackageReference Include="Microsoft.AspNetCore.JsonPatch" />
+		<PackageReference Include="Microsoft.Extensions.Caching.Hybrid" />
+		<PackageReference Include="MimeKit" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\PatientBooking.Api.Common\PatientBooking.Api.Common.csproj" />
+		<ProjectReference Include="..\PatientBooking.Api.Domain\PatientBooking.Api.Domain.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="System.IdentityModel.Tokens.Jwt" />
+
+		<!-- Riok.Mapperly is a source generator, not a diagnostic analyzer, so it stays
+		 per-project rather than moving to Directory.Build.props's global analyzer set. -->
+		<PackageReference Include="Riok.Mapperly" PrivateAssets="all" />
+
+		<!-- All analyzers are applied globally via Directory.Build.props -->
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Folder Include="Contracts\" />
+	  <Folder Include="DTOs\" />
+	  <Folder Include="Extensions\" />
+	  <Folder Include="Mappers\" />
+	  <Folder Include="Validators\" />
+	  <Folder Include="Services\" />
+	</ItemGroup>
 
 </Project>

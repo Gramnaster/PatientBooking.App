@@ -1,9 +1,42 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+	<TargetFramework>net10.0</TargetFramework>
+	<ImplicitUsings>enable</ImplicitUsings>
+	<Nullable>enable</Nullable>
+	<LangVersion>latest</LangVersion>
+
+	<TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+	<WarningLevel>9999</WarningLevel>
+	<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+	<!-- AnalysisLevel/AnalysisMode inherited from Directory.Build.props (latest / recommended) -->
+	<EnableNETAnalyzers>true</EnableNETAnalyzers>
+
+	<!-- Meziantou left at its default rule set: keeps the high-value async/correctness/
+	security rules at warning, drops stylistic pedantry (trailing commas, record-class
+	spelling, filename matching). 'all-warnings' promotes every rule and was pure noise
+	for a learning project. -->
+
+	<GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
+
+	<ItemGroup>
+		<!-- Only actual usage: EntityFrameworkQueryableExtensions (CountAsync/ToListAsync) in
+			Models/Extensions/QueryableExtensions.cs. No provider package needed here — that's
+			Domain's job (UseSqlServer); this project just needs the async LINQ extensions. -->
+		<PackageReference Include="Microsoft.EntityFrameworkCore" />
+
+		<!-- All analyzers (SonarAnalyzer.CSharp, Roslynator, Meziantou, AsyncFixer,
+		     IDisposableAnalyzers, SharpSource, ErrorProne.NET) are applied globally via
+		     Directory.Build.props -->
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Folder Include="Constants\" />
+	  <Folder Include="Enums\" />
+	  <Folder Include="Models\" />
+	  <Folder Include="Results\" />
+	</ItemGroup>
 
 </Project>

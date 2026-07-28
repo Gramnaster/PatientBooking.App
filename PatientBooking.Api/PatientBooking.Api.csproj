@@ -14,6 +14,7 @@
 
 	<!-- AnalysisLevel/AnalysisMode inherited from Directory.Build.props (latest / recommended) -->
 	<EnableNETAnalyzers>true</EnableNETAnalyzers>
+	<UserSecretsId>a6c0da1f-e840-4008-afe1-d1d2c8ab67cf</UserSecretsId>
   </PropertyGroup>
 
 	<ItemGroup>
@@ -56,6 +57,22 @@
 		<PackageReference Include="Serilog.Sinks.Console" />
 		<PackageReference Include="Serilog.Sinks.File" />
 		<PackageReference Include="Serilog.Sinks.Seq" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <ProjectReference Include="..\PatientBooking.Api.Application\PatientBooking.Api.Application.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Folder Include="AuthorizationFilters\" />
+	  <Folder Include="BackgroundServices\" />
+	  <Folder Include="CachePolicies\" />
+	  <Folder Include="Controllers\" />
+	  <Folder Include="Filters\" />
+	  <Folder Include="Handlers\" />
+	  <Folder Include="Hubs\" />
+	  <Folder Include="Middleware\" />
+	  <Folder Include="OpenApi\" />
 	</ItemGroup>
 
 </Project>
