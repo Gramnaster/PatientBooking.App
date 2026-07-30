@@ -34,12 +34,10 @@
 
 	<ItemGroup>
 	  <Folder Include="Constants\" />
-	  <Folder Include="Enums\" />
 	  <Folder Include="Models\Config\" />
 	  <Folder Include="Models\Extensions\" />
 	  <Folder Include="Models\Filtering\" />
 	  <Folder Include="Models\Paging\" />
-	  <Folder Include="Results\" />
 	</ItemGroup>
 
 </Project>

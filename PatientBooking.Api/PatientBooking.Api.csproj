@@ -67,7 +67,6 @@
 	  <Folder Include="AuthorizationFilters\" />
 	  <Folder Include="BackgroundServices\" />
 	  <Folder Include="CachePolicies\" />
-	  <Folder Include="Controllers\" />
 	  <Folder Include="Filters\" />
 	  <Folder Include="Handlers\" />
 	  <Folder Include="Hubs\" />

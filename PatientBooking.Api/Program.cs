@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
@@ -54,14 +55,29 @@ try
         throw new InvalidOperationException("ConnectionStrings:PatientBookingDbConnectionString is not configured");
     }
 
+    // Adding DBContext to use SQL Server
     builder.Services.AddDbContext<PatientBookingDbContext>(options =>
         options.UseSqlServer(builder.Configuration.GetConnectionString("PatientBookingDbConnectionString")));
+
+    // Identity Service that's obsolete with AddIdentityApiEndpoints
+    //builder.Services.AddIdentityCore<ApplicationUser>(options => { })
+    //    .AddRoles<IdentityRole>()
+    //    .AddEntityFrameworkStores<PatientBookingDbContext>()
+
+    // Built-in Minimal API endpoints
+    builder.Services.AddIdentityApiEndpoints<ApplicationUser>()
+        .AddEntityFrameworkStores<PatientBookingDbContext>();
+
+    builder.Services.AddAuthorization();
 
     builder.Services.AddControllers();
     // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
     builder.Services.AddOpenApi();
 
     var app = builder.Build();
+
+    // Identity's built-in endpoints need different prefix or the two will collide
+    app.MapGroup("api/defaultauth").MapIdentityApi<ApplicationUser>();
 
     // Configure the HTTP request pipeline.
     if (app.Environment.IsDevelopment())
@@ -71,6 +87,7 @@ try
 
     app.UseHttpsRedirection();
 
+    app.UseAuthentication();
     app.UseAuthorization();
 
     app.MapControllers();
