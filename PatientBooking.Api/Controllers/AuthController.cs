@@ -28,17 +28,20 @@ public class AuthController : BaseApiController
     [HttpPost]
     public void Post([FromBody] string value)
     {
+        // Method intentionally left empty.
     }
 
     // PUT api/<AuthController>/5
     [HttpPut("{id}")]
     public void Put(int id, [FromBody] string value)
     {
+        // Method intentionally left empty.
     }
 
     // DELETE api/<AuthController>/5
     [HttpDelete("{id}")]
     public void Delete(int id)
     {
+        // Method intentionally left empty.
     }
 }
