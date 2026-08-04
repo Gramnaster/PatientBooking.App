@@ -10,4 +10,5 @@ public enum ErrorCodes
     BadRequest = 5,
     Failure = 6,
     Forbid = 7,
+    Unauthorized = 8,
 }
