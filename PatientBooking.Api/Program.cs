@@ -110,6 +110,9 @@ try
     // Register own business-logic services
     builder.Services.AddScoped<IUsersService, UsersService>();
 
+    // Singletons
+    builder.Services.AddSingleton(TimeProvider.System);
+
     builder.Services.AddControllers();
     // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
     builder.Services.AddOpenApi();

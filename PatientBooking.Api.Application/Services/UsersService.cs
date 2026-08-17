@@ -19,7 +19,8 @@ public class UsersService(
     UserManager<ApplicationUser> userManager,
     ILogger<UsersService> logger,
     PatientBookingDbContext patientBookingDbContext,
-    IOptions<JwtSettings> jwtOptions
+    IOptions<JwtSettings> jwtOptions,
+    TimeProvider clock
 ) : IUsersService
 {
     public async Task<Result<RegisteredUserDto>> RegisterAsync(RegisterUserDto registerUserDto)
@@ -99,7 +100,7 @@ public class UsersService(
             Subject = new ClaimsIdentity(claims),
             Issuer = jwtOptions.Value.Issuer,
             Audience = jwtOptions.Value.Audience,
-            Expires = DateTime.UtcNow.AddMinutes(jwtOptions.Value.DurationInMinutes),
+            Expires = clock.GetUtcNow().UtcDateTime.AddMinutes(jwtOptions.Value.DurationInMinutes),
             SigningCredentials = credentials,
         };
 
