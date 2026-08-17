@@ -1,5 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PatientBooking.Api.Application.Contracts;
+using PatientBooking.Api.Application.DTOs.Auth;
 
 // For more information on enabling Web API for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
 
@@ -8,40 +10,22 @@ namespace PatientBooking.Api.Controllers;
 [Route("api/[controller]")]
 [ApiController]
 [AllowAnonymous]
-public class AuthController : BaseApiController
+public class AuthController(IUsersService usersService) : BaseApiController
 {
-    // GET: api/<AuthController>
-    [HttpGet]
-    public IEnumerable<string> Get()
+    // WIP: Needs to register the IUsersService
+    // POST: api/<AuthController>
+    [HttpPost("register")]
+    public async Task<ActionResult<RegisteredUserDto>> RegisterAsync(RegisterUserDto registerUserDto)
     {
-        return new string[] { "value1", "value2" };
+        var result = await usersService.RegisterAsync(registerUserDto);
+        return ToActionResult(result);
     }
 
-    // GET api/<AuthController>/5
-    [HttpGet("{id}")]
-    public string Get(int id)
+    [HttpPost("login")]
+    public async Task<ActionResult<string>> LoginAsync(LoginUserDto loginUserDto, CancellationToken ct)
     {
-        return "value";
+        var result = await usersService.LoginAsync(loginUserDto, ct);
+        return ToActionResult(result);
     }
 
-    // POST api/<AuthController>
-    [HttpPost]
-    public void Post([FromBody] string value)
-    {
-        // Method intentionally left empty.
-    }
-
-    // PUT api/<AuthController>/5
-    [HttpPut("{id}")]
-    public void Put(int id, [FromBody] string value)
-    {
-        // Method intentionally left empty.
-    }
-
-    // DELETE api/<AuthController>/5
-    [HttpDelete("{id}")]
-    public void Delete(int id)
-    {
-        // Method intentionally left empty.
-    }
 }

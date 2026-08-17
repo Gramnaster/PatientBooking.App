@@ -39,7 +39,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <Folder Include="Configurations\" />
 	  <Folder Include="Migrations\" />
 	  <Folder Include="Security\" />
 	  <Folder Include="SQL Scripts\" />

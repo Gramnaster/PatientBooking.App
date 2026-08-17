@@ -1,6 +1,27 @@
-@PatientBooking.Api_HostAddress = http://localhost:5045
-
-GET {{PatientBooking.Api_HostAddress}}/weatherforecast/
-Accept: application/json
+@PatientBooking.Api_HostAddress = https://localhost:7195
+@json = application/json
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJQYXRpZW50Qm9va2luZ0FwaUNsaWVudCIsImlzcyI6IlBhdGllbnRCb29raW5nQXBpIiwiZXhwIjoxNzg2NDMxMjA4LCJzdWIiOiJhOTA1Y2Q0MS1mMzI0LTQ0YTAtOTU0NC04OWNhODIwNDRmMGMiLCJlbWFpbCI6InVzZXJAZW1haWwuY29tIiwianRpIjoiN2M1MmI1NWYtYzdhNy00MTNhLTkyNDUtZmI0ZTE2YzZkZmY2IiwibmFtZSI6IkpvaG4gTGFzdCIsImlhdCI6MTc4NjQzMDMwOCwibmJmIjoxNzg2NDMwMzA4fQ.4WNG-ms12Ylk3lvzzqneeppfeKmjpn2-fD45gIuZsHg
 
 ###
+
+POST {{PatientBooking.Api_HostAddress}}/api/auth/register
+Content-Type: application/json
+
+{
+  "Email": "user@email.com",
+  "Password": "Password!!!123",
+  "FirstName": "John",
+  "LastName": "Last"
+}
+
+###
+
+POST {{PatientBooking.Api_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "Email": "user@email.com",
+  "Password": "Password!!!123"
+}
+
+

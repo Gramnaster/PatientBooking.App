@@ -1,13 +1,19 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using PatientBooking.Api.Application.Contracts;
+using PatientBooking.Api.Application.Services;
+using PatientBooking.Api.Common.Models.Config;
 using PatientBooking.Api.Domain;
 using Serilog;
 using Serilog.Enrichers.Span;
 using Serilog.Events;
 using System.Globalization;
+using System.Text;
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
@@ -67,7 +73,42 @@ try
     builder.Services.AddIdentityApiEndpoints<ApplicationUser>()
         .AddEntityFrameworkStores<PatientBookingDbContext>();
 
+    // Adds JWT as the default scheme
+    // WIP: Complete the setup of checking JWTsettings, along the other schemes required
+    builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
+
+    // Fail fast if key is missing rather than issuing tokens none can validate
+    var jwtSettings = builder.Configuration.GetSection("JwtSettings").Get<JwtSettings>() ?? new JwtSettings();
+    if (string.IsNullOrWhiteSpace(jwtSettings.Key))
+    {
+        throw new InvalidOperationException("JwtSettings:Key is not configured");
+    }
+
+    builder.Services.AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
+    })
+        .AddJwtBearer(options =>
+        {
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                ValidIssuer = jwtSettings.Issuer,
+                ValidAudience = jwtSettings.Audience,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Key)),
+                ClockSkew = TimeSpan.Zero, // Default is 5 mins
+            };
+        });
+
     builder.Services.AddAuthorization();
+
+    // Register own business-logic services
+    builder.Services.AddScoped<IUsersService, UsersService>();
 
     builder.Services.AddControllers();
     // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
