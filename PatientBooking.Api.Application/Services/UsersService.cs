@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Identity;
+﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -17,12 +18,16 @@ namespace PatientBooking.Api.Application.Services;
 
 public class UsersService(
     UserManager<ApplicationUser> userManager,
+    SignInManager<ApplicationUser> signInManager,
     ILogger<UsersService> logger,
+    IHttpContextAccessor httpContextAccessor,
     PatientBookingDbContext patientBookingDbContext,
     IOptions<JwtSettings> jwtOptions,
     TimeProvider clock
 ) : IUsersService
 {
+    private const string _invalidCredentials = "Invalid Credentials";
+
     public async Task<Result<RegisteredUserDto>> RegisterAsync(RegisterUserDto registerUserDto)
     {
         ApplicationUser user = new()
@@ -56,22 +61,36 @@ public class UsersService(
         return Result<RegisteredUserDto>.Success(registeredUserDto);
     }
 
-    public async Task<Result<string>> LoginAsync(LoginUserDto loginUserDto, CancellationToken ct)
+    public async Task<Result<LoginResponseDto>> LoginAsync(LoginUserDto loginUserDto, CancellationToken ct)
     {
+        var ipAddress = httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
         var user = await userManager.FindByEmailAsync(loginUserDto.Email);
         if (user is null)
         {
-            return Result<string>.Failure(new ResultError(nameof(ErrorCodes.Unauthorized), "Invalid credentials."));
+            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Unauthorized), _invalidCredentials));
         }
 
-        bool isPasswordValid = await userManager.CheckPasswordAsync(user, loginUserDto.Password);
-        if (!isPasswordValid)
+        var signInResult = await signInManager.CheckPasswordSignInAsync(
+            user, loginUserDto.Password, lockoutOnFailure: true);
+
+        if (signInResult.IsLockedOut)
         {
-            return Result<string>.Failure(new ResultError(nameof(ErrorCodes.Unauthorized), "Invalid credentials."));
+            return FailLockedOut(loginUserDto.Email, ipAddress);
+        }
+
+        if (signInResult.IsNotAllowed)
+        {
+            return FailEmailNotConfirmed(loginUserDto.Email, ipAddress);
+        }
+
+        if (!signInResult.Succeeded)
+        {
+            return FailWrongPassword(loginUserDto.Email, ipAddress);
         }
 
         var token = await GenerateTokenAsync(user, ct);
-        return Result<string>.Success(token);
+        return Result<LoginResponseDto>.Success(new LoginResponseDto { Token = token });
     }
 
     private async Task<string> GenerateTokenAsync(ApplicationUser user, CancellationToken ct)
@@ -117,5 +136,23 @@ public class UsersService(
             return "Patient";
 
         throw new InvalidOperationException($"User {userId} has no associated role profile.");
+    }
+
+    private Result<LoginResponseDto> FailLockedOut(string email, string ipAddress)
+    {
+        logger.LoginBlockedLockedOut(email, ipAddress);
+        return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), _invalidCredentials));
+    }
+
+    private Result<LoginResponseDto> FailEmailNotConfirmed(string email, string ipAddress)
+    {
+        logger.LoginBlockedEmailNotConfirmed(email, ipAddress);
+        return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), _invalidCredentials));
+    }
+
+    private Result<LoginResponseDto> FailWrongPassword(string email, string ipAddress)
+    {
+        logger.LoginFailedWrongPassword(email, ipAddress);
+        return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), _invalidCredentials));
     }
 }

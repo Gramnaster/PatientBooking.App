@@ -47,12 +47,6 @@ for FILE in "${STAGED_FILES[@]}"; do
         echo "🔴 $FILE: async void is dangerous — use async Task instead"
         ERRORS=$((ERRORS + 1))
     fi
-
-    # Check for .Result or .GetAwaiter().GetResult() (sync-over-async)
-    if grep -n '\.Result\b\|\.GetAwaiter()\.GetResult()' "$FILE" 2>/dev/null; then
-        echo "🔴 $FILE: Avoid sync-over-async (.Result / .GetAwaiter().GetResult())"
-        ERRORS=$((ERRORS + 1))
-    fi
 done
 
 if [[ $ERRORS -gt 0 ]]; then

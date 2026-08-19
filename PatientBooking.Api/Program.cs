@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using OpenTelemetry;
@@ -64,18 +65,30 @@ try
     builder.Services.AddDbContext<PatientBookingDbContext>(options =>
         options.UseSqlServer(builder.Configuration.GetConnectionString("PatientBookingDbConnectionString")));
 
-    // Identity Service that's obsolete with AddIdentityApiEndpoints
-    //builder.Services.AddIdentityCore<ApplicationUser>(options => { })
-    //    .AddRoles<IdentityRole>()
-    //    .AddEntityFrameworkStores<PatientBookingDbContext>()
-
     // Built-in Minimal API endpoints
-    builder.Services.AddIdentityApiEndpoints<ApplicationUser>()
+    builder.Services.AddIdentityApiEndpoints<ApplicationUser>(options =>
+    {
+        options.SignIn.RequireConfirmedEmail = true;
+
+        options.Lockout.MaxFailedAccessAttempts = 5;
+        options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
+        options.Lockout.AllowedForNewUsers = true;
+
+        options.Password.RequiredLength = 8;
+        options.Password.RequireDigit = true;
+        options.Password.RequireUppercase = true;
+        options.Password.RequireLowercase = true;
+        options.Password.RequireNonAlphanumeric = true;
+    })
+        //.AddRoles<IdentityRole>() // Not necessary anymore
         .AddEntityFrameworkStores<PatientBookingDbContext>();
 
     // Adds JWT as the default scheme
     // WIP: Complete the setup of checking JWTsettings, along the other schemes required
     builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
+
+    // Enables emailing
+    builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("EmailSettings"));
 
     // Fail fast if key is missing rather than issuing tokens none can validate
     var jwtSettings = builder.Configuration.GetSection("JwtSettings").Get<JwtSettings>() ?? new JwtSettings();
@@ -112,6 +125,9 @@ try
 
     // Singletons
     builder.Services.AddSingleton(TimeProvider.System);
+    builder.Services.AddSingleton<SmtpIdentityEmailSender>();
+    builder.Services.AddSingleton<IEmailSender<ApplicationUser>>(sp => sp.GetRequiredService<SmtpIdentityEmailSender>());
+    builder.Services.AddSingleton<ILoginNotificationSender>(sp => sp.GetRequiredService<SmtpIdentityEmailSender>());
 
     builder.Services.AddControllers();
     // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi

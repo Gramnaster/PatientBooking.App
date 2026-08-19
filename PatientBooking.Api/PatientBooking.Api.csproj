@@ -64,7 +64,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <Folder Include="AuthorizationFilters\" />
 	  <Folder Include="BackgroundServices\" />
 	  <Folder Include="CachePolicies\" />
 	  <Folder Include="Filters\" />

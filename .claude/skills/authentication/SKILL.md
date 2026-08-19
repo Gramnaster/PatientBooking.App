@@ -112,6 +112,104 @@ public class MinimumAgeHandler(TimeProvider clock) : AuthorizationHandler<Minimu
 }
 ```
 
+### Resource-Scoped Authorization (Custom Filters)
+
+Policy-based authorization answers "does this user have permission X?" A resource-scoped check
+answers a different question — "does this user have permission X on *this specific* resource?" —
+where the resource id comes off the route. `AuthorizationHandler<T>` has no built-in access to
+route data; a custom MVC filter does.
+
+Two variants, chosen by whether membership can change without the user re-authenticating:
+
+**Membership can change at runtime** (many-to-many, admin-assignable, no re-login expected) —
+needs a per-request DB check. The attribute can't take a constructor-injected `DbContext`
+directly (the runtime builds attributes by reflection, outside DI), so split it: a
+`TypeFilterAttribute` marker plus the actual filter class, which DI resolves normally.
+
+```csharp
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, AllowMultiple = false)]
+public class TeamMemberAttribute : TypeFilterAttribute
+{
+    public TeamMemberAttribute() : base(typeof(TeamMemberFilter))
+    {
+    }
+}
+
+public class TeamMemberFilter(AppDbContext db) : IAsyncAuthorizationFilter
+{
+    public async Task OnAuthorizationAsync(AuthorizationFilterContext context)
+    {
+        var user = context.HttpContext.User;
+
+        if (user is not { Identity.IsAuthenticated: true })
+        {
+            context.Result = new UnauthorizedResult();
+            return;
+        }
+
+        if (user.IsInRole("Admin"))
+        {
+            return; // global bypass — checked before the DB hit
+        }
+
+        var userId = user.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!context.RouteData.Values.TryGetValue("teamId", out var teamIdObj)
+            || !int.TryParse(teamIdObj?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var teamId))
+        {
+            context.Result = new ForbidResult();
+            return;
+        }
+
+        bool isMember = await db.TeamMembers
+            .AnyAsync(m => m.UserId == userId && m.TeamId == teamId, context.HttpContext.RequestAborted);
+
+        if (!isMember)
+        {
+            context.Result = new ForbidResult();
+        }
+    }
+}
+
+// Usage: [HttpGet("{teamId:int}/reports")] [TeamMember]
+```
+
+**Membership is 1:1 and set once** (a user belongs to exactly one branch/tenant/org) — don't hit
+the DB every request. Embed it as a claim at token issuance instead, the same way a role claim
+already is, and the check collapses to a string comparison with no `DbContext` dependency — which
+also means no `TypeFilterAttribute` indirection is needed; the attribute can implement the filter
+directly:
+
+```csharp
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, AllowMultiple = false)]
+public sealed class BranchMemberAttribute : Attribute, IAuthorizationFilter
+{
+    public void OnAuthorization(AuthorizationFilterContext context)
+    {
+        var user = context.HttpContext.User;
+
+        if (user is not { Identity.IsAuthenticated: true })
+        {
+            context.Result = new UnauthorizedResult();
+            return;
+        }
+
+        if (user.IsInRole("Admin"))
+        {
+            return;
+        }
+
+        if (!context.RouteData.Values.TryGetValue("branchId", out var branchIdObj)
+            || user.FindFirstValue("branch_id") != branchIdObj?.ToString())
+        {
+            context.Result = new ForbidResult();
+        }
+    }
+}
+```
+
+Trade-off: a claim goes stale until the next login/token refresh if membership changes mid-session
+— acceptable for the same reason it's already accepted for the role claim, not a new risk.
+
 ### Protecting Endpoints
 
 ```csharp
@@ -196,6 +294,18 @@ group.MapGet("/", Handler).RequireAuthorization("AdminAccess");
 dotnet user-secrets set "Jwt:Key" "super-secret-key-12345"
 ```
 
+### Don't Null-Chain Into `Identity.IsAuthenticated`
+
+```csharp
+// BAD — doesn't guard against `user` itself being null (no `?.` after `user`),
+// and reads as a boolean comparison rather than a null-safety check
+if (user?.Identity?.IsAuthenticated == false) { ... }
+
+// GOOD — an extended property pattern (C# 10+) is null-safe at every level:
+// matches only when `user`, `user.Identity`, and `IsAuthenticated == true` all hold
+if (user is not { Identity.IsAuthenticated: true }) { ... }
+```
+
 ### Don't Skip Token Validation
 
 ```csharp
@@ -222,3 +332,4 @@ options.TokenValidationParameters = new TokenValidationParameters
 | Multi-tenant API | Claims-based with tenant claim |
 | API-to-API communication | Client credentials (OAuth 2.0) |
 | Simple API keys | Custom `AuthenticationHandler<T>` |
+| Resource-scoped membership (route-bound id) | Custom `IAuthorizationFilter` — `TypeFilterAttribute` + DB check if membership can change at runtime, claims-only if it's 1:1 and set at login |
