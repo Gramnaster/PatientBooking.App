@@ -1,8 +1,136 @@
 # PatientBooking.App
 
 Patient booking API — solo, personal/learning project. Governed by dotnet-claude-kit
-(`.claude/rules/*.md`, `.claude/skills/*`, `.claude/agents/*` — see `AGENTS.md` for routing).
-This file adds project-specific decisions the generic rules don't know about.
+(`.claude/rules/*.md`, `.claude/skills/*`, `.claude/agents/*`). This file is the canonical
+instruction document for every coding agent working in this repository: it contains both the
+shared agent routing and the project-specific decisions the generic rules don't know about.
+
+## Shared Agent Routing & Orchestration
+
+These instructions apply to Claude Code, Codex, and any other coding agent. Reuse the Markdown
+under `.claude/rules/`, `.claude/skills/`, `.claude/agents/`, and `.claude/knowledge/` directly;
+do not create parallel copies for another runtime.
+
+Project-specific choices in this file override generic kit defaults. In particular, this
+application uses ASP.NET Core MVC controllers even where a generic kit rule prefers Minimal APIs.
+
+### Runtime-specific integration
+
+- Claude Code uses the existing `.claude` settings, hooks, agents, skills, and slash-command wiring.
+- Codex uses `.codex/config.toml`, `.codex/agents/*.toml`, and the discovery adapter under
+  `.agents/skills/`. These files only register or point to the shared instructions; they must not
+  become a second source of project policy.
+- Claude-only frontmatter, model aliases, memory paths, worktree isolation, tool names, hook
+  wiring, and slash-command registration are integration metadata. Codex should use its native
+  equivalents while following the shared Markdown guidance.
+- Claude model-selection guidance lives in `.claude/rules/agents.md`. Codex should ignore
+  Claude-specific model aliases there and use the current Codex session configuration.
+
+### Agent roster
+
+| Agent | Canonical playbook | Primary domain |
+|---|---|---|
+| dotnet-architect | `.claude/agents/dotnet-architect.md` | Architecture, project structure, module boundaries |
+| api-designer | `.claude/agents/api-designer.md` | APIs, OpenAPI, versioning, rate limiting |
+| ef-core-specialist | `.claude/agents/ef-core-specialist.md` | Database, queries, migrations, EF Core patterns |
+| test-engineer | `.claude/agents/test-engineer.md` | Test strategy, xUnit, WebApplicationFactory, Testcontainers |
+| security-auditor | `.claude/agents/security-auditor.md` | Authentication, authorization, OWASP, secrets |
+| performance-analyst | `.claude/agents/performance-analyst.md` | Benchmarks, memory, async patterns, caching |
+| devops-engineer | `.claude/agents/devops-engineer.md` | Docker, CI/CD, Aspire, deployment |
+| code-reviewer | `.claude/agents/code-reviewer.md` | Multi-dimensional code review |
+| build-error-resolver | `.claude/agents/build-error-resolver.md` | Autonomous build-error fixing |
+| refactor-cleaner | `.claude/agents/refactor-cleaner.md` | Systematic dead-code removal and cleanup |
+
+### Routing table
+
+Match user intent to the first applicable primary agent.
+
+| User intent | Primary agent | Support agent |
+|---|---|---|
+| Project setup, structure, architecture, modules, bounded contexts | dotnet-architect | — |
+| Feature scaffolding or architecture-appropriate feature creation | dotnet-architect | api-designer, ef-core-specialist |
+| API route, controller/endpoint, OpenAPI, versioning, rate limiting, CORS | api-designer | — |
+| Database, migration, query, DbContext, EF, NuGet/package upgrade | ef-core-specialist | — |
+| Tests, strategy, coverage, xUnit, WebApplicationFactory, Testcontainers | test-engineer | — |
+| Security, authentication, JWT, OIDC, authorization | security-auditor | — |
+| Performance, benchmark, memory, profiling, caching | performance-analyst | — |
+| Docker, containers, CI/CD, deployment, Aspire, service discovery | devops-engineer | — |
+| Code/PR review, project health, conventions, consistency, refactoring advice | code-reviewer | dotnet-architect when architectural |
+| Build or test failures, bounded automatic repair loop | build-error-resolver | — |
+| Dead/unused code and systematic cleanup | refactor-cleaner | — |
+
+Architecture questions take precedence over implementation routing. Specific domain expertise
+takes precedence over general expertise. Surface security concerns even when another role is
+primary. Code review should load architecture and domain context based on the reviewed files.
+
+### Skill loading
+
+Load skills in dependency order:
+
+1. Read `.claude/skills/modern-csharp/SKILL.md` for all .NET work.
+2. Read the selected agent's playbook.
+3. Read the relevant agent-specific skills below and any files they directly reference.
+
+| Agent | Skills |
+|---|---|
+| dotnet-architect | modern-csharp, architecture-advisor, project-structure, scaffold, project-setup; conditionally vertical-slice, clean-architecture, ddd |
+| api-designer | modern-csharp, minimal-api, api-versioning, authentication, error-handling |
+| ef-core-specialist | modern-csharp, ef-core, configuration, migrate |
+| test-engineer | modern-csharp, testing |
+| security-auditor | modern-csharp, authentication, configuration |
+| performance-analyst | modern-csharp, caching |
+| devops-engineer | modern-csharp, docker, ci-cd, aspire |
+| code-reviewer | modern-csharp, code-review, convention-learner; contextual clean-architecture and ddd |
+| build-error-resolver | modern-csharp, build-fix; contextual ef-core and dependency-injection |
+| refactor-cleaner | modern-csharp, de-sloppify; contextual testing and ef-core |
+
+Cross-agent skills:
+
+- `instinct-system`: user corrections, recurring non-obvious discoveries, status/export/import.
+- `wrap-up`: session handoff lifecycle using `.claude/handoff.md`.
+- `checkpoint`: explicit mid-session save before risky changes or task switches.
+- `workflow-mastery`: context pressure, large-codebase navigation, or parallel workflows.
+- `convention-learner`: detect and enforce project-specific conventions.
+
+### Roslyn MCP preferences
+
+Prefer available Roslyn MCP operations over broad file scanning for symbol definitions,
+references, implementations, type hierarchies, project graphs, public APIs, diagnostics, dead
+code, circular dependencies, call chains, test coverage maps, anti-patterns, callers, overrides,
+NuGet packages, endpoint maps, and DI registrations. Use `rg`, focused source inspection, and
+normal `dotnet` commands when the corresponding MCP operation is unavailable.
+
+### Shared workflow names
+
+The following names identify the shared kit workflows. Claude Code may expose them as slash
+commands; other runtimes should treat them as named workflows and load the corresponding skill:
+
+| Workflow | Supporting skill/role | Purpose |
+|---|---|---|
+| `/dotnet-init` | project-setup, dotnet-architect | Interactive project initialization |
+| `/spec` | shared workflow | Questioning to an agreed spec under `docs/specs/` |
+| `/plan` | architecture-advisor, dotnet-architect | Architecture-aware planning |
+| `/verify` | shared workflow | Seven-phase verification pipeline |
+| `/tdd` | testing, test-engineer | Red-green-refactor workflow |
+| `/scaffold` | dotnet-architect | Architecture-aware feature scaffolding |
+| `/code-review` | convention-learner, code-reviewer | Blast-radius-prioritized review |
+| `/build-fix` | build-error-resolver | Bounded build/test repair loop |
+| `/checkpoint` | checkpoint | Mid-session commit and handoff |
+| `/security-scan` | security-auditor | OWASP, secrets, and dependency audit |
+| `/migrate` | ef-core, ef-core-specialist | EF Core, schema, .NET, and NuGet migrations |
+| `/health-check` | code-reviewer | Graded project health report |
+| `/de-sloppify` | refactor-cleaner | Systematic cleanup |
+| `/wrap-up` | wrap-up, instinct-system | Session handoff lifecycle |
+| `/outdated` | outdated | Dependency staleness, CVEs, and licenses |
+| `/arch-check` | architecture-advisor, dotnet-architect | Architecture conformance verification |
+
+### Context and response defaults
+
+- Small task: load one or two relevant skills and use focused Roslyn/source inspection.
+- Medium feature: load three or four relevant skills and inspect existing structure first.
+- Large architecture review: load all relevant skills and start with the project graph.
+- Start with the recommended approach, show implementation before extended explanation, surface
+  relevant anti-patterns, and reference the shared skill used for deeper methodology.
 
 ## Architecture: Clean Architecture + MVC Controllers
 

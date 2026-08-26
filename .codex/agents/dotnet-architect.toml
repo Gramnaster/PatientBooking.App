@@ -1,0 +1,5 @@
+name = "dotnet_architect"
+description = "Design .NET architecture, project structure, module boundaries, and architecture-appropriate feature scaffolding."
+developer_instructions = """
+Read and follow `CLAUDE.md` first; it is the single canonical project instruction document. Use `.claude/agents/dotnet-architect.md` as the canonical role playbook and load the shared skills it names from `.claude/skills/`. Ignore Claude-only frontmatter and use Codex-native tools. Project-specific choices in `CLAUDE.md`, including MVC controllers, override generic kit defaults.
+"""

@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build *)",
+      "Bash(git add *)",
+      "Bash(claude mcp *)",
+      "Bash(dotnet tool list *)",
+      "Bash(dotnet tool update *)",
+      "WebFetch(domain:www.rfc-editor.org)",
+      "WebFetch(domain:httpwg.org)",
+      "WebSearch",
+      "WebFetch(domain:codewithmukesh.com)",
+      "Read(//c/Users/jocvi/Documents/Collection-of-Folders/Obsidians/Obsidian Vault/**)",
+      "Bash(xargs grep -liE \"IdentityRole|AddRoles|RoleManager|IUserRoleStore\")",
+      "PowerShell(Get-ChildItem *)",
+      "Bash(dotnet dev-certs https *)",
+      "PowerShell(Get-NetTCPConnection *)",
+      "PowerShell(try { Get-NetTCPConnection -LocalPort 5045,7195 -ErrorAction Stop | Select-Object LocalPort, State, OwningProcess | Format-Table -AutoSize } catch { Write-Output \"No listeners on 5045/7195 \\(or cmdlet error\\): $\\($_.Exception.Message\\)\" })",
+      "Bash(dotnet run *)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" --max-time 5 http://localhost:5045/api/defaultauth/register)",
+      "mcp__cwm-roslyn-navigator__get_diagnostics",
+      "mcp__cwm-roslyn-navigator__get_file_outline",
+      "mcp__cwm-roslyn-navigator__find_symbol",
+      "Bash(dotnet clean *)"
+    ]
+  }
+}

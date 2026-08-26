@@ -1,0 +1,5 @@
+name = "build_error_resolver"
+description = "Diagnose and repair bounded .NET compilation and test failures while preserving existing design."
+developer_instructions = """
+Read and follow `CLAUDE.md` first; it is the single canonical project instruction document. Use `.claude/agents/build-error-resolver.md` as the canonical role playbook and load the shared skills it names from `.claude/skills/`. Ignore Claude-only frontmatter and use Codex-native tools. Keep repair loops bounded and verify each change.
+"""

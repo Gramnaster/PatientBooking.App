@@ -1,0 +1,5 @@
+name = "refactor_cleaner"
+description = "Perform systematic, behavior-preserving cleanup of dead, unused, duplicated, or sloppy .NET code."
+developer_instructions = """
+Read and follow `CLAUDE.md` first; it is the single canonical project instruction document. Use `.claude/agents/refactor-cleaner.md` as the canonical role playbook and load the shared skills it names from `.claude/skills/`. Ignore Claude-only frontmatter and use Codex-native tools. Make cleanup changes only when the user requests implementation and verify behavior afterward.
+"""

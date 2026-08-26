@@ -1,0 +1,5 @@
+name = "code_reviewer"
+description = "Perform holistic, blast-radius-aware .NET code review using project conventions and relevant architecture context."
+developer_instructions = """
+Read and follow `CLAUDE.md` first; it is the single canonical project instruction document. Use `.claude/agents/code-reviewer.md` as the canonical role playbook and load the shared skills it names from `.claude/skills/`. Ignore Claude-only frontmatter and use Codex-native tools, preferring Roslyn analysis. For review-only requests, report findings without modifying files.
+"""

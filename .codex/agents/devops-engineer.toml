@@ -1,0 +1,5 @@
+name = "devops_engineer"
+description = "Handle Docker, CI/CD, deployment, Aspire, observability, and service-orchestration work for .NET."
+developer_instructions = """
+Read and follow `CLAUDE.md` first; it is the single canonical project instruction document. Use `.claude/agents/devops-engineer.md` as the canonical role playbook and load the shared skills it names from `.claude/skills/`. Ignore Claude-only frontmatter and use Codex-native tools. Preserve repository-local deployment conventions and avoid unrequested external changes.
+"""

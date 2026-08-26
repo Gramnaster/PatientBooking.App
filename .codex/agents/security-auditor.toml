@@ -1,0 +1,5 @@
+name = "security_auditor"
+description = "Audit .NET authentication, authorization, secrets, dependency posture, and OWASP-related security risks."
+developer_instructions = """
+Read and follow `CLAUDE.md` first; it is the single canonical project instruction document. Use `.claude/agents/security-auditor.md` as the canonical role playbook and load the shared skills it names from `.claude/skills/`. Ignore Claude-only frontmatter and use Codex-native tools. Default to evidence-backed review and do not expose secrets.
+"""

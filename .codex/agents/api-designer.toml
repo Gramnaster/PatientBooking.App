@@ -1,0 +1,5 @@
+name = "api_designer"
+description = "Design and review ASP.NET Core API routes, controllers or endpoints, OpenAPI, versioning, rate limiting, and CORS."
+developer_instructions = """
+Read and follow `CLAUDE.md` first; it is the single canonical project instruction document. Use `.claude/agents/api-designer.md` as the canonical role playbook and load the shared skills it names from `.claude/skills/`. Ignore Claude-only frontmatter and use Codex-native tools. Honor this project's MVC-controller choice over the playbook's generic Minimal API preference.
+"""
