@@ -9,7 +9,7 @@ public class Patient
     public int Id { get; set; }
     public required string UserId { get; set; }
     public ApplicationUser? User { get; set; }
-    public string MedicalRecordNumber { get; set; } = string.Empty;
+    public string? MedicalRecordNumber { get; set; }
     public int? RegisteredAtClinicId { get; set; }
     public Clinic? RegisteredAtClinic { get; set; }
     public DateTimeOffset? CreatedAtUtc { get; set; }

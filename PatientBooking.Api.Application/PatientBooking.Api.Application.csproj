@@ -45,9 +45,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <Folder Include="Extensions\" />
 	  <Folder Include="Mappers\" />
-	  <Folder Include="Validators\" />
 	</ItemGroup>
 
 </Project>

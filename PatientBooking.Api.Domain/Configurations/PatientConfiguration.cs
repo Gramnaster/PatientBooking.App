@@ -10,6 +10,18 @@ public class PatientConfiguration : IEntityTypeConfiguration<Patient>
 {
     public void Configure(EntityTypeBuilder<Patient> builder)
     {
-        builder.HasIndex(x => x.MedicalRecordNumber).IsUnique();
+        builder.HasOne(patient => patient.User)
+                .WithOne()
+                .HasForeignKey<Patient>(patient => patient.UserId)
+                .IsRequired()
+                .OnDelete(DeleteBehavior.Cascade);
+
+        // One Patient profile for one ApplicationUser
+        builder.HasIndex(patient => patient.UserId).IsUnique();
+
+        // Unregistered patient has no MRN. Assigned MRNs must be unique.
+        builder.HasIndex(x => x.MedicalRecordNumber)
+            .IsUnique()
+            .HasFilter("[MedicalRecordNumber] IS NOT NULL");
     }
 }

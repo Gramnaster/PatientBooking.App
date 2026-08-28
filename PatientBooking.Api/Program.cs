@@ -129,6 +129,21 @@ try
     builder.Services.AddSingleton<IEmailSender<ApplicationUser>>(sp => sp.GetRequiredService<SmtpIdentityEmailSender>());
     builder.Services.AddSingleton<ILoginNotificationSender>(sp => sp.GetRequiredService<SmtpIdentityEmailSender>());
 
+    builder.Services.AddHttpClient<IBreachedPasswordChecker, HaveIBeenPwnedPasswordChecker>(client =>
+    {
+        const string address = "https://api.pwnedpasswords.com/";
+        client.BaseAddress = new Uri(address);
+    })
+        .AddStandardResilienceHandler(options =>
+        {
+            options.Retry.MaxRetryAttempts = 2;
+            options.Retry.Delay = TimeSpan.FromMilliseconds(200);
+            options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(1);
+            options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(4); // Must be >= 2x AttemptTimeout
+            options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(3);
+        });
+
+
     builder.Services.AddControllers();
     // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
     builder.Services.AddOpenApi();

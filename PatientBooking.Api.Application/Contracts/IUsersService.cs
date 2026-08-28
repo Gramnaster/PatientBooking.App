@@ -6,5 +6,9 @@ namespace PatientBooking.Api.Application.Contracts;
 public interface IUsersService
 {
     Task<Result<LoginResponseDto>> LoginAsync(LoginUserDto loginUserDto, CancellationToken ct);
-    Task<Result<RegisteredUserDto>> RegisterAsync(RegisterUserDto registerUserDto);
+    Task<Result<RegisteredUserDto>> RegisterAsync(RegisterUserDto registerUserDto, CancellationToken ct);
+    Task<Result> ConfirmEmailAsync(string userId, string token);
+    Task<Result> ResendConfirmationEmailAsync(string email);
+    Task<Result> ForgotPasswordAsync(string email);
+    Task<Result> ResetPasswordAsync(ResetPasswordDto resetPasswordDto);
 }

@@ -1,18 +1,20 @@
 # Hooks
 
-This directory contains three kinds of scripts. Only the first kind runs
-automatically through Claude Code.
+This directory contains three kinds of scripts. The first runs automatically
+through Codex and Claude lifecycle hooks; Codex uses the PowerShell variants on Windows.
+The configuration resolves the Git root at runtime, so the entire `.codex` directory
+can be copied to another Git repository without changing paths.
 
-## Claude Code hooks (declared in `hooks.json`)
+## Codex and Claude lifecycle hooks (declared in `hooks.json`)
 
 These receive the hook payload as JSON on stdin and run automatically while
-Claude works:
+Codex works. On Windows, `commandWindows` selects the PowerShell variants.
 
 | Script | Event | Purpose |
 |---|---|---|
-| `pre-bash-guard.sh` | PreToolUse (Bash) | Blocks destructive commands (force push, `git reset --hard`, unsafe `rm -rf`) |
-| `post-edit-format.sh` | PostToolUse (Edit\|Write) | Runs `dotnet format` on edited `.cs` files |
-| `post-scaffold-restore.sh` | PostToolUse (Edit\|Write) | Runs `dotnet restore` after `.csproj` changes |
+| `pre-bash-guard.ps1` | PreToolUse (Bash) | Blocks destructive commands (force push, `git reset --hard`, unsafe `rm -rf`) |
+| `post-edit-format.ps1` | PostToolUse (Edit\|Write) | Runs `dotnet format` on edited `.cs` files |
+| `post-scaffold-restore.ps1` | PostToolUse (Edit\|Write) | Runs `dotnet restore` after `.csproj` changes |
 
 ## Git pre-commit hooks (install manually)
 
