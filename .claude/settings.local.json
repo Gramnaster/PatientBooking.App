@@ -21,7 +21,8 @@
       "mcp__cwm-roslyn-navigator__get_diagnostics",
       "mcp__cwm-roslyn-navigator__get_file_outline",
       "mcp__cwm-roslyn-navigator__find_symbol",
-      "Bash(dotnet clean *)"
+      "Bash(dotnet clean *)",
+      "Bash(git status *)"
     ]
   }
 }

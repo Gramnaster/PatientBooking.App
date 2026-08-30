@@ -280,7 +280,18 @@ public class UsersService(
         patientBookingDbContext.RefreshTokens.Add(replacement);
 
         var accessToken = await GenerateTokenAsync(existing.User, ct);
-        await patientBookingDbContext.SaveChangesAsync(ct);
+
+        try
+        {
+            await patientBookingDbContext.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // After exception, `existing` is still tracked as `Modified` with its original `RowVersion` snapshot
+            patientBookingDbContext.ChangeTracker.Clear();
+            await RevokeAllActiveTokensAsync(existing.UserId, ct);
+            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), _invalidRefreshTokens));
+        }
 
         return Result<LoginResponseDto>.Success(
             new LoginResponseDto

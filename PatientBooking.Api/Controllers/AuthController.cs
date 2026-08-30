@@ -82,7 +82,7 @@ public class AuthController(IUsersService usersService) : BaseApiController
         return ToActionResult(result);
     }
 
-    [HttpPost("sessions")]
+    [HttpGet("sessions")]
     [Authorize]
     public async Task<ActionResult<IEnumerable<RefreshTokenSessionDto>>> GetActiveSessionsAsync(CancellationToken ct)
     {
@@ -90,7 +90,7 @@ public class AuthController(IUsersService usersService) : BaseApiController
         return ToActionResult(result);
     }
 
-    [HttpPost("sessions/{sessionId:int}")]
+    [HttpDelete("sessions/{sessionId:int}")]
     [Authorize]
     public async Task<ActionResult> RevokeSessionsAsync(int sessionid, CancellationToken ct)
     {

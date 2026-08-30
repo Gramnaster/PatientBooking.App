@@ -13,6 +13,8 @@ public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
         builder.HasIndex(t => t.TokenHash).IsUnique();
         builder.HasIndex(t => t.UserId);
 
+        builder.Property(t => t.RowVersion).IsRowVersion();
+
         builder.HasOne(t => t.User)
             .WithMany()
             .HasForeignKey(t => t.UserId)

@@ -34,6 +34,9 @@ public class RefreshToken
     [MaxLength(256)]
     public string? ReplacedByTokenHash { get; set; }
 
+    [Timestamp]
+    public byte[] RowVersion { get; set; } = [];
+
     [NotMapped]
     public bool IsActive => RevokedAtUtc is null && ExpiresAtUtc > DateTimeOffset.UtcNow;
 }
