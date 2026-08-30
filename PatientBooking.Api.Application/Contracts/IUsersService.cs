@@ -11,4 +11,8 @@ public interface IUsersService
     Task<Result> ResendConfirmationEmailAsync(string email);
     Task<Result> ForgotPasswordAsync(string email);
     Task<Result> ResetPasswordAsync(ResetPasswordDto resetPasswordDto);
+    Task<Result<LoginResponseDto>> RefreshTokenAsync(string refreshToken, CancellationToken ct);
+    Task<Result> RevokeSessionsAsync(int sessionId, CancellationToken ct);
+    Task<Result> RevokeRefreshTokenAsync(string refreshToken, CancellationToken ct);
+    Task<Result<IEnumerable<RefreshTokenSessionDto>>> GetActiveSessionsAsync(CancellationToken ct);
 }

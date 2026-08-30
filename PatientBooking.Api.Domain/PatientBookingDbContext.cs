@@ -12,6 +12,7 @@ public class PatientBookingDbContext(DbContextOptions<PatientBookingDbContext> o
     public DbSet<Patient> Patients { get; set; } = null!;
     public DbSet<Employee> Employees { get; set; } = null!;
     public DbSet<Clinic> Clinics { get; set; } = null!;
+    public DbSet<RefreshToken> RefreshTokens { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder builder)
     {

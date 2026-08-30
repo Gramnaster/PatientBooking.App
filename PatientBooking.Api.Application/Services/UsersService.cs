@@ -13,10 +13,13 @@ using PatientBooking.Api.Common.Models.Config;
 using PatientBooking.Api.Common.Results;
 using PatientBooking.Api.Domain;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace PatientBooking.Api.Application.Services;
 
+
+#pragma warning disable S107
 public class UsersService(
     UserManager<ApplicationUser> userManager,
     SignInManager<ApplicationUser> signInManager,
@@ -27,8 +30,14 @@ public class UsersService(
     IEmailSender<ApplicationUser> emailSender,
     TimeProvider clock
 ) : IUsersService
+#pragma warning restore S107
 {
     private const string _invalidCredentials = "Invalid Credentials";
+    private const string _invalidRefreshTokens = "Invalid or expired refresh tokens";
+
+    public string UserId => httpContextAccessor?.HttpContext?.User?.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
+        ?? httpContextAccessor?.HttpContext?.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+        ?? string.Empty;
 
     public async Task<Result<RegisteredUserDto>> RegisterAsync(RegisterUserDto registerUserDto, CancellationToken ct)
     {
@@ -169,51 +178,6 @@ public class UsersService(
         return Result<LoginResponseDto>.Success(new LoginResponseDto { Token = token });
     }
 
-    private async Task<string> GenerateTokenAsync(ApplicationUser user, CancellationToken ct)
-    {
-        List<Claim> claims =
-        [
-            new(JwtRegisteredClaimNames.Sub, user.Id),
-            new(JwtRegisteredClaimNames.Email, user.Email!),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-            new(JwtRegisteredClaimNames.Name, $"{user.FirstName} {user.LastName}"),
-        ];
-
-        // Single claim, not a list - roles are mutually exclusive by construction
-        // (One profile table row per user), so there's no Select/Union over a role list
-        // The way the IdentityRole version above needs
-        var role = await ResolveRoleAsync(user.Id, ct);
-        claims.Add(new Claim(ClaimTypes.Role, role));
-
-        // Same key material Program.cs' JwtBearer setup validates against -
-        // a mismatch here signs tokens that authenticate nowhere
-        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Value.Key));
-        var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
-
-        SecurityTokenDescriptor tokenDescriptor = new()
-        {
-            Subject = new ClaimsIdentity(claims),
-            Issuer = jwtOptions.Value.Issuer,
-            Audience = jwtOptions.Value.Audience,
-            Expires = clock.GetUtcNow().UtcDateTime.AddMinutes(jwtOptions.Value.DurationInMinutes),
-            SigningCredentials = credentials,
-        };
-
-        return new JsonWebTokenHandler().CreateToken(tokenDescriptor);
-    }
-
-    private async Task<string> ResolveRoleAsync(string userId, CancellationToken ct)
-    {
-        if (await patientBookingDbContext.Admins.AnyAsync(a => a.UserId == userId, ct))
-            return "Admin";
-        if (await patientBookingDbContext.Employees.AnyAsync(e => e.UserId == userId, ct))
-            return "Employee";
-        if (await patientBookingDbContext.Patients.AnyAsync(p => p.UserId == userId, ct))
-            return "Patient";
-
-        throw new InvalidOperationException($"User {userId} has no associated role profile.");
-    }
-
     private Result<LoginResponseDto> FailLockedOut(string email, string ipAddress)
     {
         logger.LoginBlockedLockedOut(email, ipAddress);
@@ -283,4 +247,177 @@ public class UsersService(
 
     private static ResultError[] ToResultError(IEnumerable<IdentityError> errors) =>
         errors.Select(e => new ResultError(nameof(ErrorCodes.BadRequest), e.Description)).ToArray();
+
+    public async Task<Result<LoginResponseDto>> RefreshTokenAsync(string refreshToken, CancellationToken ct)
+    {
+        var tokenHash = HashToken(refreshToken);
+        var existing = await patientBookingDbContext.RefreshTokens
+            .Include(t => t.User)
+            .FirstOrDefaultAsync(t => t.TokenHash == tokenHash, ct);
+
+        if (existing is null || existing.User is null)
+        {
+            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), _invalidRefreshTokens));
+        }
+
+        if (existing.RevokedAtUtc is not null)
+        {
+            logger.RefreshTokenReuseDetected(existing.UserId);
+            await RevokeAllActiveTokensAsync(existing.UserId, ct);
+            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), _invalidRefreshTokens));
+        }
+
+        if (!existing.IsActive)
+        {
+            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), _invalidRefreshTokens));
+        }
+
+        var rawReplacement = GenerateRawToken();
+        var replacement = BuildRefreshToken(existing.UserId, rawReplacement);
+
+        existing.RevokedAtUtc = clock.GetUtcNow();
+        existing.ReplacedByTokenHash = replacement.TokenHash;
+        patientBookingDbContext.RefreshTokens.Add(replacement);
+
+        var accessToken = await GenerateTokenAsync(existing.User, ct);
+        await patientBookingDbContext.SaveChangesAsync(ct);
+
+        return Result<LoginResponseDto>.Success(
+            new LoginResponseDto
+            {
+                Token = accessToken,
+                RefreshToken = rawReplacement,
+            });
+    }
+
+    private static string GenerateRawToken() =>
+        WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+    private static string HashToken(string rawToken) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawToken)));
+
+    private async Task RevokeAllActiveTokensAsync(string userId, CancellationToken ct)
+    {
+        var activeTokens = await patientBookingDbContext.RefreshTokens
+                .Where(t => t.UserId == userId && t.RevokedAtUtc == null)
+                .ToListAsync(ct);
+
+        var now = clock.GetUtcNow();
+        foreach (var token in activeTokens)
+        {
+            token.RevokedAtUtc = now;
+        }
+
+        await patientBookingDbContext.SaveChangesAsync(ct);
+    }
+    private RefreshToken BuildRefreshToken(string userId, string rawToken) => new()
+    {
+        UserId = userId,
+        TokenHash = HashToken(rawToken),
+        ExpiresAtUtc = clock.GetUtcNow().AddDays(jwtOptions.Value.RefreshTokenDurationInDays),
+    };
+
+    private async Task<string> GenerateTokenAsync(ApplicationUser user, CancellationToken ct)
+    {
+        List<Claim> claims =
+        [
+            new(JwtRegisteredClaimNames.Sub, user.Id),
+            new(JwtRegisteredClaimNames.Email, user.Email!),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new(JwtRegisteredClaimNames.Name, $"{user.FirstName} {user.LastName}"),
+        ];
+
+        // Single claim, not a list - roles are mutually exclusive by construction
+        // (One profile table row per user), so there's no Select/Union over a role list
+        // The way the IdentityRole version above needs
+        var role = await ResolveRoleAsync(user.Id, ct);
+        claims.Add(new Claim(ClaimTypes.Role, role));
+
+        // Same key material Program.cs' JwtBearer setup validates against -
+        // a mismatch here signs tokens that authenticate nowhere
+        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Value.Key));
+        var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+
+        SecurityTokenDescriptor tokenDescriptor = new()
+        {
+            Subject = new ClaimsIdentity(claims),
+            Issuer = jwtOptions.Value.Issuer,
+            Audience = jwtOptions.Value.Audience,
+            Expires = clock.GetUtcNow().UtcDateTime.AddMinutes(jwtOptions.Value.DurationInMinutes),
+            SigningCredentials = credentials,
+        };
+
+        return new JsonWebTokenHandler().CreateToken(tokenDescriptor);
+    }
+
+    private async Task<string> ResolveRoleAsync(string userId, CancellationToken ct)
+    {
+        if (await patientBookingDbContext.Admins.AnyAsync(a => a.UserId == userId, ct))
+            return "Admin";
+        if (await patientBookingDbContext.Employees.AnyAsync(e => e.UserId == userId, ct))
+            return "Employee";
+        if (await patientBookingDbContext.Patients.AnyAsync(p => p.UserId == userId, ct))
+            return "Patient";
+
+        throw new InvalidOperationException($"User {userId} has no associated role profile.");
+    }
+
+    // Idempotent. Revoking an unknown or already-revoked token still reorts Success, so a client
+    // retrying logout (e.g., after a dropped response) doesn't get an error for something true.
+    public async Task<Result> RevokeRefreshTokenAsync(string refreshToken, CancellationToken ct)
+    {
+        var tokenHash = HashToken(refreshToken);
+        var existing = await patientBookingDbContext.RefreshTokens
+            .FirstOrDefaultAsync(t => t.TokenHash == tokenHash, ct);
+
+        if (existing is not null && existing.RevokedAtUtc is null)
+        {
+            existing.RevokedAtUtc = clock.GetUtcNow();
+            await patientBookingDbContext.SaveChangesAsync(ct);
+        }
+
+        return Result.Success();
+    }
+
+    // Metadata only (Id, CreatedAt, ExpiresAt) - never the token or hash, same never returning a password hash.
+    // Scoped to userId (the caller's own "sub" claim, not a route parameter), so no way to list or target...
+    // another user's sessions.
+    public async Task<Result<IEnumerable<RefreshTokenSessionDto>>> GetActiveSessionsAsync(CancellationToken ct)
+    {
+        var now = clock.GetUtcNow();
+        var sessions = await patientBookingDbContext.RefreshTokens
+            .Where(t => t.UserId == UserId && t.RevokedAtUtc == null && t.ExpiresAtUtc > now)
+            .OrderByDescending(t => t.CreatedAtUtc)
+            .Select(t => new RefreshTokenSessionDto
+            {
+                Id = t.Id,
+                CreatedAtUtc = t.CreatedAtUtc,
+                ExpiresAtUtc = t.ExpiresAtUtc,
+            })
+            .ToListAsync(ct);
+
+        return Result<IEnumerable<RefreshTokenSessionDto>>.Success(sessions);
+    }
+
+    // Look up excludes other user's rows, so a sessionId belonging to someone else 404s here
+    // rather than reaching an ownership check
+    public async Task<Result> RevokeSessionsAsync(int sessionId, CancellationToken ct)
+    {
+        var session = await patientBookingDbContext.RefreshTokens
+            .FirstOrDefaultAsync(t => t.Id == sessionId && t.UserId == UserId, ct);
+
+        if (session is null)
+        {
+            return Result.NotFound("Session not found");
+        }
+
+        if (session.RevokedAtUtc is null)
+        {
+            session.RevokedAtUtc = clock.GetUtcNow();
+            await patientBookingDbContext.SaveChangesAsync(ct);
+        }
+
+        return Result.Success();
+    }
+
+
 }

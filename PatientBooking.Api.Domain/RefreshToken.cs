@@ -6,6 +6,10 @@ using System.Text;
 
 namespace PatientBooking.Api.Domain;
 
+/// <summary>
+/// Persistent refresh token, backing UsersService.RefreshTokenAsync/RevokeRefreshTokenAsync.
+/// Only a SHA-256 hash of the token is stored - same as not storing plaintext passwords.
+/// </summary>
 public class RefreshToken
 {
     [Key]
@@ -18,8 +22,10 @@ public class RefreshToken
     [Required, MaxLength(256)]
     public required string TokenHash { get; set; }
 
-    public DateTimeOffset? ExpiresAtUtc { get; set; }
-    public DateTimeOffset? CreatedAtUtc { get; set; }
+    // Should probably be non-nullable because every token needs an expiry
+    public DateTimeOffset ExpiresAtUtc { get; set; }
+    // Not nullable becauase every token has a creation moment
+    public DateTimeOffset CreatedAtUtc { get; set; }
 
     // Null = still active. Set the moment the token is used (rotation) or explicity logged out
     public DateTimeOffset? RevokedAtUtc { get; set; }
@@ -29,5 +35,5 @@ public class RefreshToken
     public string? ReplacedByTokenHash { get; set; }
 
     [NotMapped]
-    public bool IsActive => RevokedAtUtc is null & ExpiresAtUtc > DateTimeOffset.UtcNow;
+    public bool IsActive => RevokedAtUtc is null && ExpiresAtUtc > DateTimeOffset.UtcNow;
 }

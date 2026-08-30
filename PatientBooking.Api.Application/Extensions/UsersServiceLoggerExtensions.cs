@@ -12,4 +12,7 @@ internal static partial class UsersServiceLoggerExtensions
 
     [LoggerMessage(EventId = 3019, Level = LogLevel.Debug, Message = "Login blocked for unconfirmed email: {Email} from {IpAddress}")]
     public static partial void LoginBlockedEmailNotConfirmed(this ILogger logger, string email, string ipAddress);
+
+    [LoggerMessage(EventId = 3102, Level = LogLevel.Warning, Message = "Refresh token reuse detected for user {UserId} - revoking all active tokens.")]
+    public static partial void RefreshTokenReuseDetected(this ILogger logger, string userId);
 }
