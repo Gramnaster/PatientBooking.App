@@ -11,7 +11,7 @@ POST {{PatientBooking.Api_HostAddress}}/api/auth/register
 Content-Type: application/json
 
 {
-  "Email": "user5@email.com",
+  "Email": "user6@email.com",
   "Password": "Password!!!123",
   "FirstName": "John",
   "LastName": "Last"
@@ -23,7 +23,7 @@ POST {{PatientBooking.Api_HostAddress}}/api/auth/login
 Content-Type: application/json
 
 {
-  "Email": "user5@email.com",
+  "Email": "user6@email.com",
   "Password": "Password!!!123"
 }
 

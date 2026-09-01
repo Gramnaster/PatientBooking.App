@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -10,6 +11,7 @@ using PatientBooking.Api.Application.Contracts;
 using PatientBooking.Api.Application.Services;
 using PatientBooking.Api.Common.Models.Config;
 using PatientBooking.Api.Domain;
+using PatientBooking.Api.Domain.Security;
 using Serilog;
 using Serilog.Enrichers.Span;
 using Serilog.Events;
@@ -128,6 +130,21 @@ try
     builder.Services.AddSingleton<SmtpIdentityEmailSender>();
     builder.Services.AddSingleton<IEmailSender<ApplicationUser>>(sp => sp.GetRequiredService<SmtpIdentityEmailSender>());
     builder.Services.AddSingleton<ILoginNotificationSender>(sp => sp.GetRequiredService<SmtpIdentityEmailSender>());
+
+    // PII Encryption Singletons
+    builder.Services.Configure<LookupProtectionSettings>(builder.Configuration.GetSection("LookupProtection"));
+    builder.Services.AddSingleton<IPersonalDataProtector, PersonalDataProtector>();
+    builder.Services.AddSingleton<ILookupProtectorKeyRing, LookupProtectorKeyRing>();
+    builder.Services.AddSingleton<ILookupProtector, LookupProtector>();
+
+    // Data Protection's own key ring, persisted to disk so okeys survive app restarts
+    var dataProtectionKeyPath = builder.Configuration["DataProtection:KeyPath"];
+    builder.Services.AddDataProtection()
+        .SetApplicationName("PatientBooking.Api")
+        .PersistKeysToFileSystem(new DirectoryInfo(
+            string.IsNullOrWhiteSpace(dataProtectionKeyPath)
+            ? Path.Combine(builder.Environment.ContentRootPath, "keys")
+            : dataProtectionKeyPath));
 
     builder.Services.AddHttpClient<IBreachedPasswordChecker, HaveIBeenPwnedPasswordChecker>(client =>
     {

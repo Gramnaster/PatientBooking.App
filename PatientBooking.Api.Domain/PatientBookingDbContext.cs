@@ -1,12 +1,16 @@
-﻿using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+﻿using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
-using System;
-using System.Collections.Generic;
-using System.Text;
+using PatientBooking.Api.Domain.Configurations;
+using System.Reflection;
 
 namespace PatientBooking.Api.Domain;
 
-public class PatientBookingDbContext(DbContextOptions<PatientBookingDbContext> options) : IdentityDbContext<ApplicationUser>(options)
+public class PatientBookingDbContext(
+    DbContextOptions<PatientBookingDbContext> options,
+    IPersonalDataProtector personalDataProtector,
+    ILookupProtector lookupProtector
+) : IdentityDbContext<ApplicationUser>(options)
 {
     public DbSet<Admin> Admins { get; set; } = null!;
     public DbSet<Patient> Patients { get; set; } = null!;
@@ -18,5 +22,14 @@ public class PatientBookingDbContext(DbContextOptions<PatientBookingDbContext> o
     {
         base.OnModelCreating(builder);
         builder.ApplyConfigurationsFromAssembly(typeof(PatientBookingDbContext).Assembly);
+
+        builder.ApplyConfigurationsFromAssembly(
+            Assembly.GetExecutingAssembly(),
+            type => type != typeof(ApplicationUserConfiguration));
+
+        builder.ApplyConfiguration(
+            new ApplicationUserConfiguration(
+                personalDataProtector,
+                lookupProtector));
     }
 }
