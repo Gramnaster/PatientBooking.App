@@ -4,6 +4,8 @@ namespace PatientBooking.Api.Application.Services;
 
 internal static partial class UsersServiceLoggerExtensions
 {
+    [LoggerMessage(EventId = 3101, Level = LogLevel.Warning, Message = "Invalid two-factor code for user {UserId}")]
+    public static partial void InvalidTwoFactorCode(this ILogger logger, string userId);
     [LoggerMessage(EventId = 3107, Level = LogLevel.Debug, Message = "Incorrect password usage for email: {Email} from {IpAddress}")]
     public static partial void LoginFailedWrongPassword(this ILogger logger, string email, string ipAddress);
 

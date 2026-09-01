@@ -1,6 +1,5 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PatientBooking.Api.Application.Contracts;
 using PatientBooking.Api.Application.DTOs.Auth;
 
@@ -97,4 +96,56 @@ public class AuthController(IUsersService usersService) : BaseApiController
         var result = await usersService.RevokeSessionsAsync(sessionid, ct);
         return ToActionResult(result);
     }
+
+    [HttpGet("2fa/setup")]
+    [Authorize]
+    public async Task<ActionResult<TwoFactorSetupDto>> GetTwoFactorSetupAsync()
+    {
+        var result = await usersService.GetTwoFactorSetupAsync();
+        return ToActionResult(result);
+    }
+
+    [HttpPost("2fa/enable")]
+    [Authorize]
+    public async Task<ActionResult<TwoFactorEnabledDto>> EnableTwoFactorAsync(TwoFactorCodeDto codeDto)
+    {
+        var result = await usersService.EnableTwoFactorAsync(codeDto);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("2fa/disable")]
+    [Authorize]
+    public async Task<ActionResult> DisableTwoFactorAsync()
+    {
+        var result = await usersService.DisableTwoFactorAsync();
+        return ToActionResult(result);
+    }
+
+    [HttpPost("2fa/login")]
+    [AllowAnonymous]
+    public async Task<ActionResult<LoginResponseDto>> VerifyTwoFactorLoginAsync(
+        [FromHeader(Name = "Authorization")] string? authorization,
+        TwoFactorCodeDto codeDto,
+        CancellationToken ct
+    )
+    {
+        if (string.IsNullOrWhiteSpace(authorization)
+            || !authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            return Unauthorized();
+        }
+
+        var pendingToken = authorization["Bearer ".Length..].Trim();
+
+        var result = await usersService.VerifyTwoFactorLoginAsync(pendingToken, codeDto.Code, ct);
+        return ToActionResult(result);
+    }
+
+    //[HttpPost("external")]
+    //[AllowAnonymous]
+    //public async Task<ActionResult<LoginResponseDto>> ExternalLoginAsync(ExternalLoginDto externalLoginDto, CancellationToken ct)
+    //{
+    //    var result = await usersService.ExternalLoginAsync(externalLoginDto, ct);
+    //    return ToActionResult(result);
+    //}
 }

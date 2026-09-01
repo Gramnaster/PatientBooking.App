@@ -15,4 +15,8 @@ public interface IUsersService
     Task<Result> RevokeSessionsAsync(int sessionId, CancellationToken ct);
     Task<Result> RevokeRefreshTokenAsync(string refreshToken, CancellationToken ct);
     Task<Result<IEnumerable<RefreshTokenSessionDto>>> GetActiveSessionsAsync(CancellationToken ct);
+    Task<Result<TwoFactorSetupDto>> GetTwoFactorSetupAsync();
+    Task<Result<TwoFactorEnabledDto>> EnableTwoFactorAsync(TwoFactorCodeDto codeDto);
+    Task<Result> DisableTwoFactorAsync();
+    Task<Result<LoginResponseDto>> VerifyTwoFactorLoginAsync(string pendingToken, string code, CancellationToken ct);
 }

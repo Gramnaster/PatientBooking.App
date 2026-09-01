@@ -28,12 +28,18 @@ public class UsersService(
     PatientBookingDbContext patientBookingDbContext,
     IOptions<JwtSettings> jwtOptions,
     IEmailSender<ApplicationUser> emailSender,
+    ILoginNotificationSender loginNotificationSender,
     TimeProvider clock
 ) : IUsersService
 #pragma warning restore S107
 {
     private const string _invalidCredentials = "Invalid Credentials";
     private const string _invalidRefreshTokens = "Invalid or expired refresh tokens";
+
+    // 2FA Properties
+    private const int PendingTokenMinutes = 5;
+    private const int RecoveryCodeCount = 10;
+    private string PendingAudience => $"{jwtOptions.Value.Audience}:2fa-pending";
 
     public string UserId => httpContextAccessor?.HttpContext?.User?.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
         ?? httpContextAccessor?.HttpContext?.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
@@ -174,6 +180,16 @@ public class UsersService(
             return FailWrongPassword(loginUserDto.Email, ipAddress);
         }
 
+        if (user.TwoFactorEnabled)
+        {
+            LoginResponseDto loginResponseDto = new()
+            {
+                RequiresTwoFactor = true,
+                PendingToken = GeneratePendingToken(user),
+            };
+            return Result<LoginResponseDto>.Success(loginResponseDto);
+        }
+
         var token = await GenerateTokenAsync(user, ct);
         return Result<LoginResponseDto>.Success(new LoginResponseDto { Token = token });
     }
@@ -194,6 +210,31 @@ public class UsersService(
     {
         logger.LoginFailedWrongPassword(email, ipAddress);
         return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Unauthorized), _invalidCredentials));
+    }
+
+    // No roles / email claims - this token proves "password already checked for this userId" and
+    // nothing else, so VerifyTwoFactorLoginAsync only trusts its "sub" claim
+    private string GeneratePendingToken(ApplicationUser user)
+    {
+        List<Claim> claims =
+        [
+            new Claim(JwtRegisteredClaimNames.Sub, user.Id),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+        ];
+
+        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Value.Key));
+        var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+
+        SecurityTokenDescriptor tokenDescriptor = new()
+        {
+            Subject = new ClaimsIdentity(claims),
+            Issuer = jwtOptions.Value.Issuer,
+            Audience = PendingAudience,
+            Expires = clock.GetUtcNow().UtcDateTime.AddMinutes(PendingTokenMinutes),
+            SigningCredentials = credentials,
+        };
+
+        return new JsonWebTokenHandler().CreateToken(tokenDescriptor);
     }
 
     public async Task<Result> ForgotPasswordAsync(string email)
@@ -430,5 +471,151 @@ public class UsersService(
         return Result.Success();
     }
 
+    // Creates the Authenticator URI for compatibility with existing products
+    public async Task<Result<TwoFactorSetupDto>> GetTwoFactorSetupAsync()
+    {
+        var user = await userManager.FindByIdAsync(UserId);
+        if (user is null)
+        {
+            return Result<TwoFactorSetupDto>.NotFound("User not found");
+        }
 
+        var unformattedKey = await userManager.GetAuthenticatorKeyAsync(user);
+        if (string.IsNullOrEmpty(unformattedKey))
+        {
+            await userManager.ResetAuthenticatorKeyAsync(user);
+            unformattedKey = await userManager.GetAuthenticatorKeyAsync(user);
+        }
+
+        TwoFactorSetupDto twoFactorSetupDto = new()
+        {
+            SharedKey = unformattedKey!,
+            AuthenticatorUri = BuildAuthenticatorUri(user, unformattedKey!, jwtOptions.Value.Issuer),
+        };
+        return Result<TwoFactorSetupDto>.Success(twoFactorSetupDto);
+    }
+
+    // Mirrors Identity UI's own EnableAuthenticator page format, which is what every authenticator app
+    // (Google, Authy, etc.) expects to scan as a QR code.
+    private static string BuildAuthenticatorUri(ApplicationUser user, string unformattedKey, string issuer) =>
+        $"otpauth://totp/{Uri.EscapeDataString(issuer)}:{Uri.EscapeDataString(user.Email!)}" +
+        $"?secret={unformattedKey}&issuer={Uri.EscapeDataString(issuer)}&digits=6";
+
+    public async Task<Result<TwoFactorEnabledDto>> EnableTwoFactorAsync(TwoFactorCodeDto codeDto)
+    {
+        var user = await userManager.FindByIdAsync(UserId);
+        if (user is null)
+        {
+            return Result<TwoFactorEnabledDto>.NotFound("User not found");
+        }
+
+        var isCodeValid = await userManager.VerifyTwoFactorTokenAsync(
+            user,
+            TokenOptions.DefaultAuthenticatorProvider,
+            codeDto.Code
+        );
+        if (!isCodeValid)
+        {
+            return Result<TwoFactorEnabledDto>.Failure(new ResultError(nameof(ErrorCodes.BadRequest), "Invalid authenticator code"));
+        }
+
+        await userManager.SetTwoFactorEnabledAsync(user, enabled: true);
+        var recoveryCodes = await userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, RecoveryCodeCount);
+
+        TwoFactorEnabledDto twoFactorEnabledDto = new()
+        {
+            RecoveryCodes = recoveryCodes ?? [],
+        };
+
+        return Result<TwoFactorEnabledDto>.Success(twoFactorEnabledDto);
+    }
+
+    // Resets auth key too - re-enabling later requires a fresh QR scan
+    // Matches Identity UI's own disable behaviour, rather than silently letting stale key work again
+    public async Task<Result> DisableTwoFactorAsync()
+    {
+        var user = await userManager.FindByIdAsync(UserId);
+        if (user is null)
+        {
+            return Result.NotFound("User not found");
+        }
+
+        await userManager.SetTwoFactorEnabledAsync(user, enabled: false);
+        await userManager.ResetAuthenticatorKeyAsync(user);
+
+        return Result.Success();
+    }
+
+    public async Task<Result<LoginResponseDto>> VerifyTwoFactorLoginAsync(string pendingToken, string code, CancellationToken ct)
+    {
+        var ipAddress = httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+        string userId;
+        try
+        {
+            // Try to validate pending token's signature/issuer/audience/lifetime the same way JwtBearer would
+            // Forged or expired token fails here before ever touching a user record
+            TokenValidationParameters validationParameters = new()
+            {
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                ValidIssuer = jwtOptions.Value.Issuer,
+                ValidAudience = PendingAudience,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Value.Key)),
+                ClockSkew = TimeSpan.Zero,
+            };
+
+            TokenValidationResult validationResult = await new JsonWebTokenHandler().ValidateTokenAsync(pendingToken, validationParameters);
+            if (!validationResult.IsValid)
+            {
+                throw validationResult.Exception ?? new SecurityTokenException("Pending token failed validation.");
+            }
+
+            userId = validationResult.ClaimsIdentity.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
+                ?? validationResult.ClaimsIdentity.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                ?? throw new SecurityTokenException("Pending token is missing a subject claim.");
+        }
+        catch (Exception ex) when (ex is SecurityTokenException or ArgumentException)
+        {
+            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Unauthorized), "Invalid or expired two-factor session. Please login again."));
+        }
+
+        var user = await userManager.FindByIdAsync(userId);
+        if (user is null)
+        {
+            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Unauthorized), "Invalid two-factor session."));
+        }
+
+        if (await userManager.IsLockedOutAsync(user))
+        {
+            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), "Account temporarily locked due to repeated failed attempts. Please try again later."));
+        }
+
+        var isTotpValid = await userManager.VerifyTwoFactorTokenAsync(user, TokenOptions.DefaultAuthenticatorProvider, code);
+        var isValid = isTotpValid || await userManager.RedeemTwoFactorRecoveryCodeAsync(user, code) is { Succeeded: true };
+        if (!isValid)
+        {
+            logger.InvalidTwoFactorCode(userId);
+            await userManager.AccessFailedAsync(user);
+            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Unauthorized), "invalid authentication code"));
+        }
+
+        await userManager.ResetAccessFailedCountAsync(user);
+        return Result<LoginResponseDto>.Success(await IssueTokenPairAsync(user, ipAddress, ct));
+    }
+
+    private async Task<LoginResponseDto> IssueTokenPairAsync(ApplicationUser user, string ipAddress, CancellationToken ct)
+    {
+        var accessToken = await GenerateTokenAsync(user, ct);
+        var rawRefreshToken = GenerateRawToken();
+
+        patientBookingDbContext.RefreshTokens.Add(BuildRefreshToken(user.Id, rawRefreshToken));
+        await patientBookingDbContext.SaveChangesAsync(ct);
+
+        await loginNotificationSender.SendLoginNotificationAsync(user, ipAddress, clock.GetUtcNow(), ct);
+
+        return new LoginResponseDto { Token = accessToken, RefreshToken = rawRefreshToken };
+    }
 }
