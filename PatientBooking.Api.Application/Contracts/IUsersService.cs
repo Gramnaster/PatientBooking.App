@@ -1,5 +1,6 @@
 ﻿using PatientBooking.Api.Application.DTOs.Auth;
 using PatientBooking.Api.Common.Results;
+using PatientBooking.Api.Domain;
 
 namespace PatientBooking.Api.Application.Contracts;
 
@@ -19,4 +20,7 @@ public interface IUsersService
     Task<Result<TwoFactorEnabledDto>> EnableTwoFactorAsync(TwoFactorCodeDto codeDto);
     Task<Result> DisableTwoFactorAsync();
     Task<Result<LoginResponseDto>> VerifyTwoFactorLoginAsync(string pendingToken, string code, CancellationToken ct);
+    Task<Result<LoginResponseDto>> ExternalLoginAsync(ExternalLoginDto externalLoginDto, CancellationToken ct);
+    Task<Result> SoftDeleteAccountAsync(string? password, CancellationToken ct);
+    Task<Result> HardDeleteAccountAsync(string? password, CancellationToken ct);
 }

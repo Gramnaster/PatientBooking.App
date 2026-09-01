@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using Google.Apis.Auth;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
@@ -29,6 +30,7 @@ public class UsersService(
     IOptions<JwtSettings> jwtOptions,
     IEmailSender<ApplicationUser> emailSender,
     ILoginNotificationSender loginNotificationSender,
+    IOptions<GoogleAuthSettings> googleAuthOptions,
     TimeProvider clock
 ) : IUsersService
 #pragma warning restore S107
@@ -617,5 +619,183 @@ public class UsersService(
         await loginNotificationSender.SendLoginNotificationAsync(user, ipAddress, clock.GetUtcNow(), ct);
 
         return new LoginResponseDto { Token = accessToken, RefreshToken = rawRefreshToken };
+    }
+
+    public async Task<Result<LoginResponseDto>> ExternalLoginAsync(ExternalLoginDto externalLoginDto, CancellationToken ct)
+    {
+        if (!externalLoginDto.Provider.Equals("Google", StringComparison.Ordinal))
+        {
+            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.BadRequest), "Unsupported external provider"));
+        }
+
+        GoogleJsonWebSignature.Payload payload;
+        try
+        {
+            GoogleJsonWebSignature.ValidationSettings validationSettings = new()
+            {
+                Audience = [googleAuthOptions.Value.ClientId],
+            };
+            payload = await GoogleJsonWebSignature.ValidateAsync(externalLoginDto.IdToken, validationSettings);
+        }
+        catch (InvalidJwtException)
+        {
+            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Unauthorized), "Invalid or expired external login token."));
+        }
+
+        if (!payload.EmailVerified)
+        {
+            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), "Google acount email is not verified."));
+        }
+
+        var userResult = await FindOrCreateGoogleUserAsync(payload, ct);
+        if (!userResult.IsSuccess)
+        {
+            return Result<LoginResponseDto>.Failure(userResult.Errors);
+        }
+
+        var user = userResult.Value!;
+
+        // External login bypasses SignInManager's lockout check entirely
+        // Soft-delete needs its own explicit guard here - the only path in this file
+        // that does, since LoginAsync gets this for free via IsLockedOut
+        if (user.DeletedAtUtc is not null)
+        {
+            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), "This account has been deactivated."));
+        }
+
+        var ipAddress = httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
+        return Result<LoginResponseDto>.Success(await IssueTokenPairAsync(user, ipAddress, ct));
+    }
+
+    private async Task<Result<ApplicationUser>> FindOrCreateGoogleUserAsync(GoogleJsonWebSignature.Payload payload, CancellationToken ct)
+    {
+        var user = await userManager.FindByLoginAsync("Google", payload.Subject);
+        if (user is not null)
+        {
+            return Result<ApplicationUser>.Success(user);
+        }
+
+        user = await userManager.FindByEmailAsync(payload.Email);
+        if (user is null)
+        {
+            user = new ApplicationUser
+            {
+                Email = payload.Email,
+                UserName = payload.Email,
+                FirstName = payload.GivenName ?? string.Empty,
+                LastName = payload.FamilyName ?? string.Empty,
+                EmailConfirmed = true,
+            };
+
+            IdentityResult createResult = await userManager.CreateAsync(user);
+            if (!createResult.Succeeded)
+            {
+                return Result<ApplicationUser>.Failure(ToResultError(createResult.Errors));
+            }
+
+            patientBookingDbContext.Patients.Add(new Patient { UserId = user.Id });
+            await patientBookingDbContext.SaveChangesAsync(ct);
+        }
+
+        var linkResult = await userManager.AddLoginAsync(user, new UserLoginInfo("Google", payload.Subject, "Google"));
+        return linkResult.Succeeded
+            ? Result<ApplicationUser>.Success(user)
+            : Result<ApplicationUser>.Failure(ToResultError(linkResult.Errors));
+    }
+
+    public async Task<Result> SoftDeleteAccountAsync(string? password, CancellationToken ct)
+    {
+        var user = await userManager.FindByIdAsync(UserId);
+        if (user is null) return Result.NotFound("User not found.");
+
+        var passwordError = await ConfirmPasswordIfRequiredAsync(user, password);
+        if (passwordError is not null) return passwordError.Value;
+
+        var lastAdminError = await BlockIfLastAdminAsync(user);
+        if (lastAdminError is not null) return lastAdminError.Value;
+
+        return await SoftDeleteCoreAsync(user, ct);
+    }
+
+    private async Task<Result> SoftDeleteCoreAsync(ApplicationUser user, CancellationToken ct)
+    {
+        if (user.DeletedAtUtc is not null) return Result.Success();
+
+        user.DeletedAtUtc = clock.GetUtcNow();
+        user.LockoutEnabled = true;
+        user.LockoutEnd = DateTimeOffset.MaxValue;
+
+        IdentityResult updateResult = await userManager.UpdateAsync(user);
+        if (!updateResult.Succeeded)
+        {
+            return Result.Failure(ToResultError(updateResult.Errors));
+        }
+
+        await userManager.UpdateSecurityStampAsync(user);
+        await RevokeAllActiveTokensAsync(user.Id, ct);
+
+        return Result.Success();
+    }
+
+    public async Task<Result> HardDeleteAccountAsync(string? password, CancellationToken ct)
+    {
+        var user = await userManager.FindByIdAsync(UserId);
+        if (user is null)
+        {
+            return Result.NotFound("User not found.");
+        }
+
+        var passwordError = await ConfirmPasswordIfRequiredAsync(user, password);
+        if (passwordError is not null)
+        {
+            return passwordError.Value!;
+        }
+
+        var lastAdminError = await BlockIfLastAdminAsync(user);
+        if (lastAdminError is not null)
+        {
+            return lastAdminError.Value;
+        }
+
+        return await HardDeleteCoreAsync(user);
+    }
+    private async Task<Result> HardDeleteCoreAsync(ApplicationUser user)
+    {
+        IdentityResult deleteResult = await userManager.DeleteAsync(user);
+        return deleteResult.Succeeded
+            ? Result.Success()
+            : Result.Failure(ToResultError(deleteResult.Errors));
+    }
+
+    private async Task<Result?> ConfirmPasswordIfRequiredAsync(ApplicationUser user, string? password)
+    {
+        if (!await userManager.HasPasswordAsync(user))
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(password))
+        {
+            return Result.Failure(new ResultError(nameof(ErrorCodes.BadRequest), "Password confirmation is required."));
+        }
+
+        var passwordValid = await userManager.CheckPasswordAsync(user, password);
+        return passwordValid
+            ? null
+            : Result.Failure(new ResultError(nameof(ErrorCodes.Forbid), "Password is incorrect."));
+    }
+
+    private async Task<Result?> BlockIfLastAdminAsync(ApplicationUser user)
+    {
+        bool isAdmin = await patientBookingDbContext.Admins.AnyAsync(a => a.UserId == user.Id);
+        if (!isAdmin)
+        {
+            return null;
+        }
+
+        var anotherAdminExists = await patientBookingDbContext.Admins.AnyAsync(a => a.UserId == user.Id);
+        return anotherAdminExists
+            ? null
+            : Result.Conflict("Cannot remove the last remaining admin account.");
     }
 }

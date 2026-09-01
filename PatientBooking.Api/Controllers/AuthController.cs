@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using PatientBooking.Api.Application.Contracts;
 using PatientBooking.Api.Application.DTOs.Auth;
@@ -141,11 +142,27 @@ public class AuthController(IUsersService usersService) : BaseApiController
         return ToActionResult(result);
     }
 
-    //[HttpPost("external")]
-    //[AllowAnonymous]
-    //public async Task<ActionResult<LoginResponseDto>> ExternalLoginAsync(ExternalLoginDto externalLoginDto, CancellationToken ct)
-    //{
-    //    var result = await usersService.ExternalLoginAsync(externalLoginDto, ct);
-    //    return ToActionResult(result);
-    //}
+    [HttpPost("external")]
+    [AllowAnonymous]
+    public async Task<ActionResult<LoginResponseDto>> ExternalLoginAsync(ExternalLoginDto externalLoginDto, CancellationToken ct)
+    {
+        var result = await usersService.ExternalLoginAsync(externalLoginDto, ct);
+        return ToActionResult(result);
+    }
+
+    [HttpDelete("account")]
+    [Authorize]
+    public async Task<ActionResult> SoftDeleteAccountAsync(DeleteAccountDto deleteAccountDto, CancellationToken ct)
+    {
+        var result = await usersService.SoftDeleteAccountAsync(deleteAccountDto.Password, ct);
+        return ToActionResult(result);
+    }
+
+    [HttpDelete("account/permanent")]
+    [Authorize]
+    public async Task<ActionResult> HardDeleteAccountAsync(DeleteAccountDto deleteAccount, CancellationToken ct)
+    {
+        var result = await usersService.HardDeleteAccountAsync(deleteAccount.Password, ct);
+        return ToActionResult(result);
+    }
 }

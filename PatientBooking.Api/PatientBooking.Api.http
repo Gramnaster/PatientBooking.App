@@ -1,6 +1,9 @@
 @PatientBooking.Api_HostAddress = https://localhost:7195
 @json = application/json
-@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJQYXRpZW50Qm9va2luZ0FwaUNsaWVudCIsImlzcyI6IlBhdGllbnRCb29raW5nQXBpIiwiZXhwIjoxNzg3OTMwODQ5LCJzdWIiOiJlODEyMTY5My0zMWUzLTQyZjQtOGFlZC0yYjM2N2E3NTBkZWYiLCJlbWFpbCI6InVzZXI1QGVtYWlsLmNvbSIsImp0aSI6IjFhZjIwOGQzLTEzNDYtNDA4YS1hOGQyLWRhZjNkZTY0YzY3YiIsIm5hbWUiOiJKb2huIExhc3QiLCJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL3JvbGUiOiJQYXRpZW50IiwiaWF0IjoxNzg3OTI5OTQ5LCJuYmYiOjE3ODc5Mjk5NDl9.wNvdPlhepSqlyR97igcp2vWUFr56PQApah_Rx2RA6XU
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJQYXRpZW50Qm9va2luZ0FwaUNsaWVudCIsImlzcyI6IlBhdGllbnRCb29raW5nQXBpIiwiZXhwIjoxNzg4MjUzNDQ4LCJzdWIiOiJlODEyMTY5My0zMWUzLTQyZjQtOGFlZC0yYjM2N2E3NTBkZWYiLCJlbWFpbCI6InVzZXI1QGVtYWlsLmNvbSIsImp0aSI6ImJjYjYwNjIxLTJkNWItNDRhOC1hOTgzLTQ3OWYwYTExNThlNCIsIm5hbWUiOiJKb2huIExhc3QiLCJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL3JvbGUiOiJQYXRpZW50IiwiaWF0IjoxNzg4MjUyNTQ4LCJuYmYiOjE3ODgyNTI1NDh9.vJMNVOFeSJI1_rhLYHU8ZvNjLARuTy4Se4lNgeV_24A
+# @accessToken = {{login.response.body.$.token}}
+
+@pendingToken = {{login.response.body.$.pendingToken}}
 
 ###
 
@@ -15,7 +18,7 @@ Content-Type: application/json
 }
 
 ###
-
+# @name login
 POST {{PatientBooking.Api_HostAddress}}/api/auth/login
 Content-Type: application/json
 
@@ -23,6 +26,7 @@ Content-Type: application/json
   "Email": "user5@email.com",
   "Password": "Password!!!123"
 }
+
 
 ###
 
@@ -40,6 +44,36 @@ Content-Type: application/json
 
 {
   "Email": "user5@email.com"
+}
+
+###
+
+POST {{PatientBooking.Api_HostAddress}}/api/auth/2fa/enable
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "Code": "870754"
+}
+
+###
+# @name setup
+GET {{PatientBooking.Api_HostAddress}}/api/auth/2fa/setup
+Authorization: Bearer {{accessToken}}
+
+{
+  "sharedKey": "B3XOEXDDHFK2ZPNK3WZ54DGRIIOA2KVQ",
+  "authenticatorUri": "otpauth://totp/PatientBookingApi:user5%40email.com?secret=B3XOEXDDHFK2ZPNK3WZ54DGRIIOA2KVQ&issuer=PatientBookingApi&digits=6"
+}
+
+###
+
+POST {{PatientBooking.Api_HostAddress}}/api/auth/2fa/login
+Authorization: Bearer {{pendingToken}}
+Content-Type: application/json
+
+{
+  "Code": "107215"
 }
 
 ###
