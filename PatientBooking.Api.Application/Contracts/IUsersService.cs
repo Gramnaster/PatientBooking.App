@@ -23,4 +23,6 @@ public interface IUsersService
     Task<Result<LoginResponseDto>> ExternalLoginAsync(ExternalLoginDto externalLoginDto, CancellationToken ct);
     Task<Result> SoftDeleteAccountAsync(string? password, CancellationToken ct);
     Task<Result> HardDeleteAccountAsync(string? password, CancellationToken ct);
+    Task<Result> AdminSoftDeleteUserAsync(string userId, CancellationToken ct);
+    Task<Result> AdminHardDeleteUserAsync(string userId, CancellationToken ct);
 }

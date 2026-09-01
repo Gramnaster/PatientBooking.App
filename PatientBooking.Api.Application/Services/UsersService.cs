@@ -759,6 +759,56 @@ public class UsersService(
 
         return await HardDeleteCoreAsync(user);
     }
+
+    // Admin path, by target userId - no password re-auth here (an admin can't know a target's
+    // password). Role membership, checked by [Authorize(Roles = "Admin")] at the controller, is
+    // the gate instead. Success is logged as a security-relevant audit event.
+    public async Task<Result> AdminSoftDeleteUserAsync(string userId, CancellationToken ct)
+    {
+        var user = await userManager.FindByIdAsync(userId);
+        if (user is null)
+        {
+            return Result.NotFound("User not found.");
+        }
+
+        var lastAdminError = await BlockIfLastAdminAsync(user);
+        if (lastAdminError is not null)
+        {
+            return lastAdminError.Value;
+        }
+
+        var result = await SoftDeleteCoreAsync(user, ct);
+        if (result.IsSuccess)
+        {
+            logger.AccountSoftDeletedByAdmin(UserId, userId);
+        }
+
+        return result;
+    }
+
+    public async Task<Result> AdminHardDeleteUserAsync(string userId, CancellationToken ct)
+    {
+        var user = await userManager.FindByIdAsync(userId);
+        if (user is null)
+        {
+            return Result.NotFound("User not found.");
+        }
+
+        var lastAdminError = await BlockIfLastAdminAsync(user);
+        if (lastAdminError is not null)
+        {
+            return lastAdminError.Value;
+        }
+
+        var result = await HardDeleteCoreAsync(user);
+        if (result.IsSuccess)
+        {
+            logger.AccountHardDeletedByAdmin(UserId, userId);
+        }
+
+        return result;
+    }
+
     private async Task<Result> HardDeleteCoreAsync(ApplicationUser user)
     {
         IdentityResult deleteResult = await userManager.DeleteAsync(user);
@@ -793,7 +843,7 @@ public class UsersService(
             return null;
         }
 
-        var anotherAdminExists = await patientBookingDbContext.Admins.AnyAsync(a => a.UserId == user.Id);
+        var anotherAdminExists = await patientBookingDbContext.Admins.AnyAsync(a => a.UserId != user.Id);
         return anotherAdminExists
             ? null
             : Result.Conflict("Cannot remove the last remaining admin account.");

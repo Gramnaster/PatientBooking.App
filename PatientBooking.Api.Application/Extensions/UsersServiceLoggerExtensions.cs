@@ -17,4 +17,10 @@ internal static partial class UsersServiceLoggerExtensions
 
     [LoggerMessage(EventId = 3102, Level = LogLevel.Warning, Message = "Refresh token reuse detected for user {UserId} - revoking all active tokens.")]
     public static partial void RefreshTokenReuseDetected(this ILogger logger, string userId);
+
+    [LoggerMessage(EventId = 3103, Level = LogLevel.Warning, Message = "Admin {AdminId} soft-deleted account {TargetUserId}.")]
+    public static partial void AccountSoftDeletedByAdmin(this ILogger logger, string adminId, string targetUserId);
+
+    [LoggerMessage(EventId = 3104, Level = LogLevel.Warning, Message = "Admin {AdminId} hard-deleted account {TargetUserId}.")]
+    public static partial void AccountHardDeletedByAdmin(this ILogger logger, string adminId, string targetUserId);
 }

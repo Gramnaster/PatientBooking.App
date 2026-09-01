@@ -165,4 +165,20 @@ public class AuthController(IUsersService usersService) : BaseApiController
         var result = await usersService.HardDeleteAccountAsync(deleteAccount.Password, ct);
         return ToActionResult(result);
     }
+
+    [HttpDelete("users/{userId}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> AdminSoftDeleteUserAsync(string userId, CancellationToken ct)
+    {
+        var result = await usersService.AdminSoftDeleteUserAsync(userId, ct);
+        return ToActionResult(result);
+    }
+
+    [HttpDelete("users/{userId}/permanent")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> AdminHardDeleteUserAsync(string userId, CancellationToken ct)
+    {
+        var result = await usersService.AdminHardDeleteUserAsync(userId, ct);
+        return ToActionResult(result);
+    }
 }
