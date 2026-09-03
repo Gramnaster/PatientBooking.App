@@ -1,9 +1,9 @@
-﻿using Microsoft.AspNetCore.Identity;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.AspNetCore.Identity;
 
 namespace PatientBooking.Api.Domain.Security;
 
@@ -12,7 +12,8 @@ public sealed class LookupProtector(ILookupProtectorKeyRing keyRing) : ILookupPr
     [return: NotNullIfNotNull(nameof(data))]
     public string? Protect(string keyId, string? data)
     {
-        if (data is null) return null;
+        if (data is null)
+            return null;
 
         var keyBytes = Convert.FromBase64String(keyRing[keyId]);
         using HMACSHA256 hmac = new(keyBytes);

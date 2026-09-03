@@ -1,8 +1,8 @@
-﻿using Microsoft.AspNetCore.Identity;
+using System.Reflection;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using PatientBooking.Api.Domain.Configurations;
-using System.Reflection;
 
 namespace PatientBooking.Api.Domain;
 
@@ -25,11 +25,9 @@ public class PatientBookingDbContext(
 
         builder.ApplyConfigurationsFromAssembly(
             Assembly.GetExecutingAssembly(),
-            type => type != typeof(ApplicationUserConfiguration));
+            type => type != typeof(ApplicationUserConfiguration)
+        );
 
-        builder.ApplyConfiguration(
-            new ApplicationUserConfiguration(
-                personalDataProtector,
-                lookupProtector));
+        builder.ApplyConfiguration(new ApplicationUserConfiguration(personalDataProtector, lookupProtector));
     }
 }

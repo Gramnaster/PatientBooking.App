@@ -12,6 +12,12 @@ description: >
 
 # Security Scan
 
+## Required Knowledge
+
+Before scanning, read `../../knowledge/security-vulnerability-review-catalog.md` completely. Use its
+surface inventory, applicability states, vulnerability-family catalog, and evidence record throughout
+the scan. The examples below are common high-signal patterns, not the complete review boundary.
+
 ## Core Principles
 
 1. **Defense in depth** — Scan multiple layers: packages, source code, configuration, and infrastructure. A project with zero CVEs can still have hardcoded secrets, SQL injection, and missing auth. Each layer catches different vulnerability classes.
@@ -32,7 +38,7 @@ Execute all 6 layers. Each produces findings rated Critical, High, Medium, or Lo
 
 **Layer 1: Package Vulnerabilities**
 ```bash
-dotnet list package --vulnerable --include-transitive
+dotnet package list --vulnerable --include-transitive
 ```
 Check for known CVEs in direct and transitive dependencies.
 
@@ -92,34 +98,37 @@ var connectionString = builder.Configuration.GetConnectionString("OrdersDb");
 
 **Layer 3: OWASP Code Patterns**
 
-Scan source code for vulnerability patterns mapped to OWASP Top 10.
+Scan source code for vulnerability patterns mapped to the current OWASP Web and API Top 10. Apply
+every relevant family in `../../knowledge/security-vulnerability-review-catalog.md`; mark each as
+verified, finding, not applicable yet with an exact trigger, or not checked. Do not report a pass when
+an applicable family was not checked.
 
 ```
-A03:2021 — Injection
+A05:2025 — Injection
   Detect: String concatenation in SQL queries, raw SQL with user input
   Pattern: FromSqlRaw($"SELECT * FROM Orders WHERE Id = '{userInput}'")
   Fix: FromSqlInterpolated($"SELECT * FROM Orders WHERE Id = {userInput}")
        or use parameterized queries / LINQ
 
-A07:2021 — Cross-Site Scripting (XSS)
+A05:2025 — Injection (Cross-Site Scripting family)
   Detect: Raw HTML output without encoding in Razor/Blazor
   Pattern: @Html.Raw(userInput)
   Fix: Use Razor's default encoding (@userInput) or sanitize explicitly
 
-A08:2021 — Insecure Deserialization
+A08:2025 — Software or Data Integrity Failures (Insecure Deserialization)
   Detect: BinaryFormatter, JsonConvert with TypeNameHandling.All
   Pattern: JsonConvert.DeserializeObject<T>(json, new JsonSerializerSettings
            { TypeNameHandling = TypeNameHandling.All })
   Fix: Use System.Text.Json (no type name handling by default)
        If Newtonsoft is required: TypeNameHandling.None + explicit type converters
 
-A02:2021 — Cryptographic Failures
+A04:2025 — Cryptographic Failures
   Detect: MD5, SHA1 for security purposes, ECB mode, hardcoded encryption keys
   Pattern: MD5.Create().ComputeHash(...)
   Fix: Use SHA256 minimum, prefer HMACSHA256 for authentication
        Use AES-GCM for encryption, derive keys from passwords using Rfc2898DeriveBytes
 
-A04:2021 — Insecure Direct Object References
+A01:2025 — Broken Access Control (Insecure Direct Object References)
   Detect: Endpoints that use user-supplied IDs without ownership verification
   Pattern: GET /orders/{id} — returns any order regardless of who owns it
   Fix: Add ownership check: where o.Id == id && o.CustomerId == currentUser.Id
@@ -309,7 +318,7 @@ Each finding uses format: `#### [SEVERITY] File:Line — Title` with OWASP Categ
 
 ```
 # BAD — NuGet packages are clean, declare victory
-dotnet list package --vulnerable → "No vulnerable packages found"
+dotnet package list --vulnerable → "No vulnerable packages found"
 "Security scan passed!"
 # Missed: hardcoded password in appsettings.json, SQL injection in SearchOrders,
 # missing [Authorize] on 3 endpoints, PII in logs

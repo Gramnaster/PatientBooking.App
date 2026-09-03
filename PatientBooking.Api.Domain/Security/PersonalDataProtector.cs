@@ -1,6 +1,6 @@
-﻿using Microsoft.AspNetCore.DataProtection;
-using Microsoft.AspNetCore.Identity;
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Identity;
 
 namespace PatientBooking.Api.Domain.Security;
 
@@ -18,15 +18,11 @@ public sealed class PersonalDataProtector : IPersonalDataProtector
 
     public string? Protect(string? data)
     {
-        return data is null
-            ? null
-            : protector.Protect(data);
+        return data is null ? null : protector.Protect(data);
     }
 
     public string? Unprotect(string? data)
     {
-        return data is null
-            ? null
-            : protector.Unprotect(data);
+        return data is null ? null : protector.Unprotect(data);
     }
 }

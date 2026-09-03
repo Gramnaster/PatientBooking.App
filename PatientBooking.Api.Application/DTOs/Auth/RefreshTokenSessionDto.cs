@@ -1,4 +1,4 @@
-﻿namespace PatientBooking.Api.Application.DTOs.Auth;
+namespace PatientBooking.Api.Application.DTOs.Auth;
 
 public sealed record RefreshTokenSessionDto
 {

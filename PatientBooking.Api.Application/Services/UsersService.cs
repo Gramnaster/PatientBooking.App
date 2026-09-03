@@ -1,4 +1,4 @@
-﻿using Google.Apis.Auth;
+using Google.Apis.Auth;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.WebUtilities;
@@ -18,7 +18,6 @@ using System.Security.Cryptography;
 using System.Text;
 
 namespace PatientBooking.Api.Application.Services;
-
 
 #pragma warning disable S107
 public class UsersService(
@@ -43,9 +42,10 @@ public class UsersService(
     private const int RecoveryCodeCount = 10;
     private string PendingAudience => $"{jwtOptions.Value.Audience}:2fa-pending";
 
-    public string UserId => httpContextAccessor?.HttpContext?.User?.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
-        ?? httpContextAccessor?.HttpContext?.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
-        ?? string.Empty;
+    public string UserId =>
+        httpContextAccessor?.HttpContext?.User?.FindFirst(
+            JwtRegisteredClaimNames.Sub
+        )?.Value ?? httpContextAccessor?.HttpContext?.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? string.Empty;
 
     public async Task<Result<RegisteredUserDto>> RegisterAsync(RegisterUserDto registerUserDto, CancellationToken ct)
     {
@@ -63,17 +63,15 @@ public class UsersService(
         IdentityResult createResult = await userManager.CreateAsync(user, registerUserDto.Password);
         if (!createResult.Succeeded)
         {
-            var registrationErrors = createResult.Errors
-                    .Select(e => new ResultError(nameof(ErrorCodes.BadRequest), e.Description))
-                    .ToArray();
+            var registrationErrors = createResult
+                .Errors
+                .Select(e => new ResultError(nameof(ErrorCodes.BadRequest), e.Description))
+                .ToArray();
 
             return Result<RegisteredUserDto>.BadRequest(registrationErrors);
         }
 
-        Patient patient = new()
-        {
-            UserId = user.Id,
-        };
+        Patient patient = new() { UserId = user.Id, };
 
         patientBookingDbContext.Patients.Add(patient);
         await patientBookingDbContext.SaveChangesAsync(ct);
@@ -117,9 +115,10 @@ public class UsersService(
             return Result.Success();
         }
 
-        var confirmationErrors = confirmResult.Errors
-                .Select(error => new ResultError(nameof(ErrorCodes.BadRequest), error.Description))
-                .ToArray();
+        var confirmationErrors = confirmResult
+            .Errors
+            .Select(error => new ResultError(nameof(ErrorCodes.BadRequest), error.Description))
+            .ToArray();
 
         return Result.BadRequest(confirmationErrors);
     }
@@ -154,11 +153,16 @@ public class UsersService(
         var user = await userManager.FindByEmailAsync(loginUserDto.Email);
         if (user is null)
         {
-            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Unauthorized), _invalidCredentials));
+            return Result<LoginResponseDto>.Failure(
+                new ResultError(nameof(ErrorCodes.Unauthorized), _invalidCredentials)
+            );
         }
 
         var signInResult = await signInManager.CheckPasswordSignInAsync(
-            user, loginUserDto.Password, lockoutOnFailure: true);
+            user,
+            loginUserDto.Password,
+            lockoutOnFailure: true
+        );
 
         if (signInResult.IsLockedOut)
         {
@@ -205,7 +209,12 @@ public class UsersService(
     private Result<LoginResponseDto> FailEmailNotConfirmed(string email, string ipAddress)
     {
         logger.LoginBlockedEmailNotConfirmed(email, ipAddress);
-        return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), "Confirm your email before signing in. Request a new confirmation email if needed."));
+        return Result<LoginResponseDto>.Failure(
+            new ResultError(
+                nameof(ErrorCodes.Forbid),
+                "Confirm your email before signing in. Request a new confirmation email if needed."
+            )
+        );
     }
 
     private Result<LoginResponseDto> FailWrongPassword(string email, string ipAddress)
@@ -281,11 +290,13 @@ public class UsersService(
             return Result.Failure(new ResultError(nameof(ErrorCodes.BadRequest), "Invalid reset token"));
         }
 
-        IdentityResult resetResult = await userManager.ResetPasswordAsync(user, decodedToken, resetPasswordDto.NewPassword);
+        IdentityResult resetResult = await userManager.ResetPasswordAsync(
+            user,
+            decodedToken,
+            resetPasswordDto.NewPassword
+        );
 
-        return resetResult.Succeeded
-            ? Result.Success()
-            : Result.Failure(ToResultError(resetResult.Errors));
+        return resetResult.Succeeded ? Result.Success() : Result.Failure(ToResultError(resetResult.Errors));
     }
 
     private static ResultError[] ToResultError(IEnumerable<IdentityError> errors) =>
@@ -294,7 +305,8 @@ public class UsersService(
     public async Task<Result<LoginResponseDto>> RefreshTokenAsync(string refreshToken, CancellationToken ct)
     {
         var tokenHash = HashToken(refreshToken);
-        var existing = await patientBookingDbContext.RefreshTokens
+        var existing = await patientBookingDbContext
+            .RefreshTokens
             .Include(t => t.User)
             .FirstOrDefaultAsync(t => t.TokenHash == tokenHash, ct);
 
@@ -336,24 +348,23 @@ public class UsersService(
             return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), _invalidRefreshTokens));
         }
 
-        return Result<LoginResponseDto>.Success(
-            new LoginResponseDto
-            {
-                Token = accessToken,
-                RefreshToken = rawReplacement,
-            });
+        return Result<LoginResponseDto>.Success(new LoginResponseDto
+        {
+            Token = accessToken,
+            RefreshToken = rawReplacement,
+        });
     }
 
-    private static string GenerateRawToken() =>
-        WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+    private static string GenerateRawToken() => WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
     private static string HashToken(string rawToken) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawToken)));
 
     private async Task RevokeAllActiveTokensAsync(string userId, CancellationToken ct)
     {
-        var activeTokens = await patientBookingDbContext.RefreshTokens
-                .Where(t => t.UserId == userId && t.RevokedAtUtc == null)
-                .ToListAsync(ct);
+        var activeTokens = await patientBookingDbContext
+            .RefreshTokens
+            .Where(t => t.UserId == userId && t.RevokedAtUtc == null)
+            .ToListAsync(ct);
 
         var now = clock.GetUtcNow();
         foreach (var token in activeTokens)
@@ -363,12 +374,13 @@ public class UsersService(
 
         await patientBookingDbContext.SaveChangesAsync(ct);
     }
-    private RefreshToken BuildRefreshToken(string userId, string rawToken) => new()
-    {
-        UserId = userId,
-        TokenHash = HashToken(rawToken),
-        ExpiresAtUtc = clock.GetUtcNow().AddDays(jwtOptions.Value.RefreshTokenDurationInDays),
-    };
+    private RefreshToken BuildRefreshToken(string userId, string rawToken) =>
+        new()
+        {
+            UserId = userId,
+            TokenHash = HashToken(rawToken),
+            ExpiresAtUtc = clock.GetUtcNow().AddDays(jwtOptions.Value.RefreshTokenDurationInDays),
+        };
 
     private async Task<string> GenerateTokenAsync(ApplicationUser user, CancellationToken ct)
     {
@@ -420,8 +432,10 @@ public class UsersService(
     public async Task<Result> RevokeRefreshTokenAsync(string refreshToken, CancellationToken ct)
     {
         var tokenHash = HashToken(refreshToken);
-        var existing = await patientBookingDbContext.RefreshTokens
-            .FirstOrDefaultAsync(t => t.TokenHash == tokenHash, ct);
+        var existing = await patientBookingDbContext.RefreshTokens.FirstOrDefaultAsync(
+            t => t.TokenHash == tokenHash,
+            ct
+        );
 
         if (existing is not null && existing.RevokedAtUtc is null)
         {
@@ -438,15 +452,18 @@ public class UsersService(
     public async Task<Result<IEnumerable<RefreshTokenSessionDto>>> GetActiveSessionsAsync(CancellationToken ct)
     {
         var now = clock.GetUtcNow();
-        var sessions = await patientBookingDbContext.RefreshTokens
+        var sessions = await patientBookingDbContext
+            .RefreshTokens
             .Where(t => t.UserId == UserId && t.RevokedAtUtc == null && t.ExpiresAtUtc > now)
             .OrderByDescending(t => t.CreatedAtUtc)
-            .Select(t => new RefreshTokenSessionDto
-            {
-                Id = t.Id,
-                CreatedAtUtc = t.CreatedAtUtc,
-                ExpiresAtUtc = t.ExpiresAtUtc,
-            })
+            .Select(
+                t => new RefreshTokenSessionDto
+                {
+                    Id = t.Id,
+                    CreatedAtUtc = t.CreatedAtUtc,
+                    ExpiresAtUtc = t.ExpiresAtUtc,
+                }
+            )
             .ToListAsync(ct);
 
         return Result<IEnumerable<RefreshTokenSessionDto>>.Success(sessions);
@@ -456,8 +473,10 @@ public class UsersService(
     // rather than reaching an ownership check
     public async Task<Result> RevokeSessionsAsync(int sessionId, CancellationToken ct)
     {
-        var session = await patientBookingDbContext.RefreshTokens
-            .FirstOrDefaultAsync(t => t.Id == sessionId && t.UserId == UserId, ct);
+        var session = await patientBookingDbContext.RefreshTokens.FirstOrDefaultAsync(
+            t => t.Id == sessionId && t.UserId == UserId,
+            ct
+        );
 
         if (session is null)
         {
@@ -501,7 +520,7 @@ public class UsersService(
     // (Google, Authy, etc.) expects to scan as a QR code.
     private static string BuildAuthenticatorUri(ApplicationUser user, string unformattedKey, string issuer) =>
         $"otpauth://totp/{Uri.EscapeDataString(issuer)}:{Uri.EscapeDataString(user.Email!)}" +
-        $"?secret={unformattedKey}&issuer={Uri.EscapeDataString(issuer)}&digits=6";
+            $"?secret={unformattedKey}&issuer={Uri.EscapeDataString(issuer)}&digits=6";
 
     public async Task<Result<TwoFactorEnabledDto>> EnableTwoFactorAsync(TwoFactorCodeDto codeDto)
     {
@@ -518,16 +537,15 @@ public class UsersService(
         );
         if (!isCodeValid)
         {
-            return Result<TwoFactorEnabledDto>.Failure(new ResultError(nameof(ErrorCodes.BadRequest), "Invalid authenticator code"));
+            return Result<TwoFactorEnabledDto>.Failure(
+                new ResultError(nameof(ErrorCodes.BadRequest), "Invalid authenticator code")
+            );
         }
 
         await userManager.SetTwoFactorEnabledAsync(user, enabled: true);
         var recoveryCodes = await userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, RecoveryCodeCount);
 
-        TwoFactorEnabledDto twoFactorEnabledDto = new()
-        {
-            RecoveryCodes = recoveryCodes ?? [],
-        };
+        TwoFactorEnabledDto twoFactorEnabledDto = new() { RecoveryCodes = recoveryCodes ?? [], };
 
         return Result<TwoFactorEnabledDto>.Success(twoFactorEnabledDto);
     }
@@ -548,7 +566,11 @@ public class UsersService(
         return Result.Success();
     }
 
-    public async Task<Result<LoginResponseDto>> VerifyTwoFactorLoginAsync(string pendingToken, string code, CancellationToken ct)
+    public async Task<Result<LoginResponseDto>> VerifyTwoFactorLoginAsync(
+        string pendingToken,
+        string code,
+        CancellationToken ct
+    )
     {
         var ipAddress = httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
@@ -569,46 +591,73 @@ public class UsersService(
                 ClockSkew = TimeSpan.Zero,
             };
 
-            TokenValidationResult validationResult = await new JsonWebTokenHandler().ValidateTokenAsync(pendingToken, validationParameters);
+            TokenValidationResult validationResult = await new JsonWebTokenHandler().ValidateTokenAsync(
+                pendingToken,
+                validationParameters
+            );
             if (!validationResult.IsValid)
             {
                 throw validationResult.Exception ?? new SecurityTokenException("Pending token failed validation.");
             }
 
-            userId = validationResult.ClaimsIdentity.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
-                ?? validationResult.ClaimsIdentity.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                ?? throw new SecurityTokenException("Pending token is missing a subject claim.");
+            userId = validationResult.ClaimsIdentity.FindFirst(
+                JwtRegisteredClaimNames.Sub
+            )?.Value ?? validationResult.ClaimsIdentity.FindFirst(ClaimTypes.NameIdentifier)?.Value ??
+                throw new SecurityTokenException("Pending token is missing a subject claim.");
         }
         catch (Exception ex) when (ex is SecurityTokenException or ArgumentException)
         {
-            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Unauthorized), "Invalid or expired two-factor session. Please login again."));
+            return Result<LoginResponseDto>.Failure(
+                new ResultError(
+                    nameof(ErrorCodes.Unauthorized),
+                    "Invalid or expired two-factor session. Please login again."
+                )
+            );
         }
 
         var user = await userManager.FindByIdAsync(userId);
         if (user is null)
         {
-            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Unauthorized), "Invalid two-factor session."));
+            return Result<LoginResponseDto>.Failure(
+                new ResultError(nameof(ErrorCodes.Unauthorized), "Invalid two-factor session.")
+            );
         }
 
         if (await userManager.IsLockedOutAsync(user))
         {
-            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), "Account temporarily locked due to repeated failed attempts. Please try again later."));
+            return Result<LoginResponseDto>.Failure(
+                new ResultError(
+                    nameof(ErrorCodes.Forbid),
+                    "Account temporarily locked due to repeated failed attempts. Please try again later."
+                )
+            );
         }
 
-        var isTotpValid = await userManager.VerifyTwoFactorTokenAsync(user, TokenOptions.DefaultAuthenticatorProvider, code);
-        var isValid = isTotpValid || await userManager.RedeemTwoFactorRecoveryCodeAsync(user, code) is { Succeeded: true };
+        var isTotpValid = await userManager.VerifyTwoFactorTokenAsync(
+            user,
+            TokenOptions.DefaultAuthenticatorProvider,
+            code
+        );
+        var isValid = isTotpValid ||
+            await userManager.RedeemTwoFactorRecoveryCodeAsync(user, code) is { Succeeded: true };
         if (!isValid)
         {
             logger.InvalidTwoFactorCode(userId);
             await userManager.AccessFailedAsync(user);
-            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Unauthorized), "invalid authentication code"));
+            return Result<LoginResponseDto>.Failure(
+                new ResultError(nameof(ErrorCodes.Unauthorized), "invalid authentication code")
+            );
         }
 
         await userManager.ResetAccessFailedCountAsync(user);
         return Result<LoginResponseDto>.Success(await IssueTokenPairAsync(user, ipAddress, ct));
     }
 
-    private async Task<LoginResponseDto> IssueTokenPairAsync(ApplicationUser user, string ipAddress, CancellationToken ct)
+    private async Task<LoginResponseDto> IssueTokenPairAsync(
+        ApplicationUser user,
+        string ipAddress,
+        CancellationToken ct
+    )
     {
         var accessToken = await GenerateTokenAsync(user, ct);
         var rawRefreshToken = GenerateRawToken();
@@ -621,11 +670,16 @@ public class UsersService(
         return new LoginResponseDto { Token = accessToken, RefreshToken = rawRefreshToken };
     }
 
-    public async Task<Result<LoginResponseDto>> ExternalLoginAsync(ExternalLoginDto externalLoginDto, CancellationToken ct)
+    public async Task<Result<LoginResponseDto>> ExternalLoginAsync(
+        ExternalLoginDto externalLoginDto,
+        CancellationToken ct
+    )
     {
         if (!externalLoginDto.Provider.Equals("Google", StringComparison.Ordinal))
         {
-            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.BadRequest), "Unsupported external provider"));
+            return Result<LoginResponseDto>.Failure(
+                new ResultError(nameof(ErrorCodes.BadRequest), "Unsupported external provider")
+            );
         }
 
         GoogleJsonWebSignature.Payload payload;
@@ -639,12 +693,16 @@ public class UsersService(
         }
         catch (InvalidJwtException)
         {
-            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Unauthorized), "Invalid or expired external login token."));
+            return Result<LoginResponseDto>.Failure(
+                new ResultError(nameof(ErrorCodes.Unauthorized), "Invalid or expired external login token.")
+            );
         }
 
         if (!payload.EmailVerified)
         {
-            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), "Google acount email is not verified."));
+            return Result<LoginResponseDto>.Failure(
+                new ResultError(nameof(ErrorCodes.Forbid), "Google acount email is not verified.")
+            );
         }
 
         var userResult = await FindOrCreateGoogleUserAsync(payload, ct);
@@ -660,14 +718,19 @@ public class UsersService(
         // that does, since LoginAsync gets this for free via IsLockedOut
         if (user.DeletedAtUtc is not null)
         {
-            return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), "This account has been deactivated."));
+            return Result<LoginResponseDto>.Failure(
+                new ResultError(nameof(ErrorCodes.Forbid), "This account has been deactivated.")
+            );
         }
 
         var ipAddress = httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
         return Result<LoginResponseDto>.Success(await IssueTokenPairAsync(user, ipAddress, ct));
     }
 
-    private async Task<Result<ApplicationUser>> FindOrCreateGoogleUserAsync(GoogleJsonWebSignature.Payload payload, CancellationToken ct)
+    private async Task<Result<ApplicationUser>> FindOrCreateGoogleUserAsync(
+        GoogleJsonWebSignature.Payload payload,
+        CancellationToken ct
+    )
     {
         var user = await userManager.FindByLoginAsync("Google", payload.Subject);
         if (user is not null)
@@ -706,20 +769,24 @@ public class UsersService(
     public async Task<Result> SoftDeleteAccountAsync(string? password, CancellationToken ct)
     {
         var user = await userManager.FindByIdAsync(UserId);
-        if (user is null) return Result.NotFound("User not found.");
+        if (user is null)
+            return Result.NotFound("User not found.");
 
         var passwordError = await ConfirmPasswordIfRequiredAsync(user, password);
-        if (passwordError is not null) return passwordError.Value;
+        if (passwordError is not null)
+            return passwordError.Value;
 
         var lastAdminError = await BlockIfLastAdminAsync(user);
-        if (lastAdminError is not null) return lastAdminError.Value;
+        if (lastAdminError is not null)
+            return lastAdminError.Value;
 
         return await SoftDeleteCoreAsync(user, ct);
     }
 
     private async Task<Result> SoftDeleteCoreAsync(ApplicationUser user, CancellationToken ct)
     {
-        if (user.DeletedAtUtc is not null) return Result.Success();
+        if (user.DeletedAtUtc is not null)
+            return Result.Success();
 
         user.DeletedAtUtc = clock.GetUtcNow();
         user.LockoutEnabled = true;
@@ -812,9 +879,7 @@ public class UsersService(
     private async Task<Result> HardDeleteCoreAsync(ApplicationUser user)
     {
         IdentityResult deleteResult = await userManager.DeleteAsync(user);
-        return deleteResult.Succeeded
-            ? Result.Success()
-            : Result.Failure(ToResultError(deleteResult.Errors));
+        return deleteResult.Succeeded ? Result.Success() : Result.Failure(ToResultError(deleteResult.Errors));
     }
 
     private async Task<Result?> ConfirmPasswordIfRequiredAsync(ApplicationUser user, string? password)
@@ -844,8 +909,6 @@ public class UsersService(
         }
 
         var anotherAdminExists = await patientBookingDbContext.Admins.AnyAsync(a => a.UserId != user.Id);
-        return anotherAdminExists
-            ? null
-            : Result.Conflict("Cannot remove the last remaining admin account.");
+        return anotherAdminExists ? null : Result.Conflict("Cannot remove the last remaining admin account.");
     }
 }

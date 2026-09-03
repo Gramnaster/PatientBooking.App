@@ -1,4 +1,4 @@
-﻿namespace PatientBooking.Api.Common.Models.Config;
+namespace PatientBooking.Api.Common.Models.Config;
 
 public class JwtSettings
 {

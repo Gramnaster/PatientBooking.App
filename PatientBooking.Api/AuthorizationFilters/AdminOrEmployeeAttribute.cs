@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 
 namespace PatientBooking.Api.AuthorizationFilters;
@@ -21,11 +21,9 @@ internal sealed class AdminOrEmployeeAttribute : Attribute, IAuthorizationFilter
             return;
         }
 
-        if (!context.RouteData.Values.TryGetValue("clinicId", out var clinicIdObj)
-            || !string.Equals(
-                    httpUser.FindFirst("ClinicId")?.Value,
-                    clinicIdObj?.ToString(),
-                    StringComparison.Ordinal)
+        if (
+            !context.RouteData.Values.TryGetValue("clinicId", out var clinicIdObj) ||
+            !string.Equals(httpUser.FindFirst("ClinicId")?.Value, clinicIdObj?.ToString(), StringComparison.Ordinal)
         )
         {
             context.Result = new ForbidResult();

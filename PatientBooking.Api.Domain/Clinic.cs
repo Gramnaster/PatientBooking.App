@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations.Schema;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace PatientBooking.Api.Domain;
 
@@ -16,5 +16,4 @@ public class Clinic
     public DateTimeOffset? CreatedAtUtc { get; set; }
     public DateTimeOffset? UpdatedAtUtc { get; set; }
     public DateTimeOffset? DeletedAtUtc { get; set; }
-
 }

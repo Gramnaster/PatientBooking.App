@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using PatientBooking.Api.Application.Contracts;
@@ -16,7 +16,10 @@ public class AuthController(IUsersService usersService) : BaseApiController
     // POST: api/<AuthController>
     [HttpPost("register")]
     [AllowAnonymous]
-    public async Task<ActionResult<RegisteredUserDto>> RegisterAsync(RegisterUserDto registerUserDto, CancellationToken ct)
+    public async Task<ActionResult<RegisteredUserDto>> RegisterAsync(
+        RegisterUserDto registerUserDto,
+        CancellationToken ct
+    )
     {
         var result = await usersService.RegisterAsync(registerUserDto, ct);
         return ToActionResult(result);
@@ -66,13 +69,16 @@ public class AuthController(IUsersService usersService) : BaseApiController
     // So only the refresh token itself is checked.
     [HttpPost("refresh")]
     [AllowAnonymous]
-    public async Task<ActionResult<LoginResponseDto>> RefreshTokenAsync(RefreshTokenRequestDto requestDto, CancellationToken ct)
+    public async Task<ActionResult<LoginResponseDto>> RefreshTokenAsync(
+        RefreshTokenRequestDto requestDto,
+        CancellationToken ct
+    )
     {
         var result = await usersService.RefreshTokenAsync(requestDto.RefreshToken, ct);
         return ToActionResult(result);
     }
 
-    // Requires the caller's own bearer token, unlike refresh - logout is a deliberate action taken by 
+    // Requires the caller's own bearer token, unlike refresh - logout is a deliberate action taken by
     // an authenticated session, not a credential-recovery path
     [HttpPost("logout")]
     [Authorize]
@@ -130,8 +136,10 @@ public class AuthController(IUsersService usersService) : BaseApiController
         CancellationToken ct
     )
     {
-        if (string.IsNullOrWhiteSpace(authorization)
-            || !authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        if (
+            string.IsNullOrWhiteSpace(authorization) ||
+            !authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+        )
         {
             return Unauthorized();
         }
@@ -144,7 +152,10 @@ public class AuthController(IUsersService usersService) : BaseApiController
 
     [HttpPost("external")]
     [AllowAnonymous]
-    public async Task<ActionResult<LoginResponseDto>> ExternalLoginAsync(ExternalLoginDto externalLoginDto, CancellationToken ct)
+    public async Task<ActionResult<LoginResponseDto>> ExternalLoginAsync(
+        ExternalLoginDto externalLoginDto,
+        CancellationToken ct
+    )
     {
         var result = await usersService.ExternalLoginAsync(externalLoginDto, ct);
         return ToActionResult(result);

@@ -1,4 +1,4 @@
-﻿namespace PatientBooking.Api.Common.Results;
+namespace PatientBooking.Api.Common.Results;
 
 public readonly record struct ResultError(string Code, string Description)
 {

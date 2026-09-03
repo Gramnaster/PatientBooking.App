@@ -7,6 +7,10 @@ description: >
 
 # Security Rules
 
+For audits, code reviews, and security-sensitive feature work, read and apply
+`../knowledge/security-vulnerability-review-catalog.md`. Its surface inventory and evidence states
+are the reusable review contract; the rules below are mandatory baselines, not complete scan coverage.
+
 ## Secrets Management
 
 - **Never hardcode secrets in source code.** Use `dotnet user-secrets` for local development, Azure Key Vault or environment variables for deployed environments. Hardcoded secrets end up in git history and are nearly impossible to fully remove.

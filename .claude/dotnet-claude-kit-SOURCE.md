@@ -18,6 +18,15 @@
 Copied directly from the sibling `HotelListing.App` project's already-verified import
 (2026-07-29) rather than re-fetched from GitHub — same commit, byte-identical content.
 
+## Local transferable extensions
+
+This copy now includes `knowledge/security-vulnerability-review-catalog.md`, a reusable .NET web
+application review catalog derived from current OWASP/CWE/Microsoft authorities and a deliberately
+vulnerable .NET teaching corpus. `rules/security.md`, `agents/security-auditor.md`, and
+`skills/security-scan/SKILL.md` load it explicitly. The Codex discovery adapter under
+`.agents/skills/security-scan/` points to the same canonical knowledge file rather than maintaining a
+second copy. Preserve these files and references when copying the kit into another project.
+
 ## How hooks are wired here (not the plugin route)
 This is a content-only copy, not a `/plugin install`, so `hooks/hooks.json` is not
 auto-registered. Its `PreToolUse`/`PostToolUse` config was hand-copied into

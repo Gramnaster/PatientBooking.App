@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
@@ -15,18 +17,24 @@ using PatientBooking.Api.Domain.Security;
 using Serilog;
 using Serilog.Enrichers.Span;
 using Serilog.Events;
-using System.Globalization;
-using System.Text;
 
 Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
-    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
-    .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
-    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
-    .Enrich.FromLogContext()
-    .Enrich.WithSpan()
-    .WriteTo.Console(formatProvider: CultureInfo.InvariantCulture)
-    .WriteTo.File("Logs/log-.txt", formatProvider: CultureInfo.InvariantCulture, rollingInterval: RollingInterval.Day)
+    .MinimumLevel
+    .Information()
+    .MinimumLevel
+    .Override("Microsoft", LogEventLevel.Warning)
+    .MinimumLevel
+    .Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
+    .MinimumLevel
+    .Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
+    .Enrich
+    .FromLogContext()
+    .Enrich
+    .WithSpan()
+    .WriteTo
+    .Console(formatProvider: CultureInfo.InvariantCulture)
+    .WriteTo
+    .File("Logs/log-.txt", formatProvider: CultureInfo.InvariantCulture, rollingInterval: RollingInterval.Day)
     .CreateBootstrapLogger();
 
 try
@@ -35,24 +43,33 @@ try
 
     var builder = WebApplication.CreateBuilder(args);
 
-    builder.Host.UseSerilog((context, services, configuration) => configuration
-        .ReadFrom.Configuration(context.Configuration)
-        .ReadFrom.Services(services)
-        .Enrich.FromLogContext()
-        .Enrich.WithSpan()
-        .Enrich.WithProperty("Application", builder.Environment.ApplicationName)
+    builder.Host.UseSerilog(
+        (context, services, configuration) => configuration
+            .ReadFrom
+            .Configuration(context.Configuration)
+            .ReadFrom
+            .Services(services)
+            .Enrich
+            .FromLogContext()
+            .Enrich
+            .WithSpan()
+            .Enrich
+            .WithProperty("Application", builder.Environment.ApplicationName)
     );
 
-    builder.Services.AddOpenTelemetry()
+    builder
+        .Services
+        .AddOpenTelemetry()
         .ConfigureResource(resource => resource.AddService(builder.Environment.ApplicationName))
-        .WithTracing(tracing => tracing
-            .AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation()
-            .AddSqlClientInstrumentation())
-        .WithMetrics(metrics => metrics
-            .AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation()
-            .AddRuntimeInstrumentation())
+        .WithTracing(
+            tracing => tracing
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddSqlClientInstrumentation()
+        )
+        .WithMetrics(
+            metrics => metrics.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation().AddRuntimeInstrumentation()
+        )
         .UseOtlpExporter();
 
     // Add services to the container.
@@ -64,24 +81,27 @@ try
     }
 
     // Adding DBContext to use SQL Server
-    builder.Services.AddDbContext<PatientBookingDbContext>(options =>
-        options.UseSqlServer(builder.Configuration.GetConnectionString("PatientBookingDbConnectionString")));
+    builder.Services.AddDbContext<PatientBookingDbContext>(
+        options => options.UseSqlServer(builder.Configuration.GetConnectionString("PatientBookingDbConnectionString"))
+    );
 
     // Built-in Minimal API endpoints
-    builder.Services.AddIdentityApiEndpoints<ApplicationUser>(options =>
-    {
-        options.SignIn.RequireConfirmedEmail = true;
+    builder
+        .Services
+        .AddIdentityApiEndpoints<ApplicationUser>(options =>
+        {
+            options.SignIn.RequireConfirmedEmail = true;
 
-        options.Lockout.MaxFailedAccessAttempts = 5;
-        options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
-        options.Lockout.AllowedForNewUsers = true;
+            options.Lockout.MaxFailedAccessAttempts = 5;
+            options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
+            options.Lockout.AllowedForNewUsers = true;
 
-        options.Password.RequiredLength = 8;
-        options.Password.RequireDigit = true;
-        options.Password.RequireUppercase = true;
-        options.Password.RequireLowercase = true;
-        options.Password.RequireNonAlphanumeric = true;
-    })
+            options.Password.RequiredLength = 8;
+            options.Password.RequireDigit = true;
+            options.Password.RequireUppercase = true;
+            options.Password.RequireLowercase = true;
+            options.Password.RequireNonAlphanumeric = true;
+        })
         //.AddRoles<IdentityRole>() // Not necessary anymore
         .AddEntityFrameworkStores<PatientBookingDbContext>();
 
@@ -99,12 +119,14 @@ try
         throw new InvalidOperationException("JwtSettings:Key is not configured");
     }
 
-    builder.Services.AddAuthentication(options =>
-    {
-        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-        options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
-    })
+    builder
+        .Services
+        .AddAuthentication(options =>
+        {
+            options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+            options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
+        })
         .AddJwtBearer(options =>
         {
             options.TokenValidationParameters = new TokenValidationParameters
@@ -128,7 +150,9 @@ try
     // Singletons
     builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddSingleton<SmtpIdentityEmailSender>();
-    builder.Services.AddSingleton<IEmailSender<ApplicationUser>>(sp => sp.GetRequiredService<SmtpIdentityEmailSender>());
+    builder.Services.AddSingleton<IEmailSender<ApplicationUser>>(
+        sp => sp.GetRequiredService<SmtpIdentityEmailSender>()
+    );
     builder.Services.AddSingleton<ILoginNotificationSender>(sp => sp.GetRequiredService<SmtpIdentityEmailSender>());
 
     // PII Encryption Singletons
@@ -139,18 +163,25 @@ try
 
     // Data Protection's own key ring, persisted to disk so okeys survive app restarts
     var dataProtectionKeyPath = builder.Configuration["DataProtection:KeyPath"];
-    builder.Services.AddDataProtection()
+    builder
+        .Services
+        .AddDataProtection()
         .SetApplicationName("PatientBooking.Api")
-        .PersistKeysToFileSystem(new DirectoryInfo(
-            string.IsNullOrWhiteSpace(dataProtectionKeyPath)
-            ? Path.Combine(builder.Environment.ContentRootPath, "keys")
-            : dataProtectionKeyPath));
+        .PersistKeysToFileSystem(
+            new DirectoryInfo(
+                string.IsNullOrWhiteSpace(dataProtectionKeyPath)
+                    ? Path.Combine(builder.Environment.ContentRootPath, "keys")
+                    : dataProtectionKeyPath
+            )
+        );
 
-    builder.Services.AddHttpClient<IBreachedPasswordChecker, HaveIBeenPwnedPasswordChecker>(client =>
-    {
-        const string address = "https://api.pwnedpasswords.com/";
-        client.BaseAddress = new Uri(address);
-    })
+    builder
+        .Services
+        .AddHttpClient<IBreachedPasswordChecker, HaveIBeenPwnedPasswordChecker>(client =>
+        {
+            const string address = "https://api.pwnedpasswords.com/";
+            client.BaseAddress = new Uri(address);
+        })
         .AddStandardResilienceHandler(options =>
         {
             options.Retry.MaxRetryAttempts = 2;
@@ -159,7 +190,6 @@ try
             options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(4); // Must be >= 2x AttemptTimeout
             options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(3);
         });
-
 
     builder.Services.AddControllers();
     // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi

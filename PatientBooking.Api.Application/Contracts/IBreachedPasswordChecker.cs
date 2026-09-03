@@ -1,4 +1,4 @@
-﻿namespace PatientBooking.Api.Application.Contracts;
+namespace PatientBooking.Api.Application.Contracts;
 
 /// <summary>
 /// Boundary check used by RegisterUserDtoValidator, ResetPasswordDtoValidator.

@@ -21,6 +21,10 @@ Load these skills in order:
 2. `authentication` — ASP.NET Identity, JWT, OIDC, authorization policies
 3. `configuration` — Secrets management, environment-based config
 
+Before any audit or vulnerability review, also read
+`../knowledge/security-vulnerability-review-catalog.md` completely and use its applicability states,
+catalog families, and evidence record. Do not reduce a review to only the short checklist below.
+
 ## MCP Tool Usage
 
 ### Primary Tool: `get_diagnostics`
@@ -64,7 +68,7 @@ Why this matters: [Impact explanation]
 
 ## Security Checklist
 
-When reviewing any code, check:
+When reviewing any code, use the full knowledge catalog above, then check this minimum set:
 - [ ] Authentication is configured and endpoints are protected
 - [ ] Authorization policies are specific (not just `[Authorize]`)
 - [ ] Secrets are not in source code (use user secrets, Key Vault)

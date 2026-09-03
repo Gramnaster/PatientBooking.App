@@ -1,4 +1,4 @@
-﻿namespace PatientBooking.Api.Common.Enums;
+namespace PatientBooking.Api.Common.Enums;
 
 public enum ErrorCodes
 {

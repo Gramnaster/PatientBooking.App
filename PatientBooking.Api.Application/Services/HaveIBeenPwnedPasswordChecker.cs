@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using PatientBooking.Api.Application.Contracts;
 using System.Security.Cryptography;
 using System.Text;

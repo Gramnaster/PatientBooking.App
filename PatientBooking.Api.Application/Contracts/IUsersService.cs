@@ -1,4 +1,4 @@
-﻿using PatientBooking.Api.Application.DTOs.Auth;
+using PatientBooking.Api.Application.DTOs.Auth;
 using PatientBooking.Api.Common.Results;
 using PatientBooking.Api.Domain;
 

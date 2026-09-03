@@ -1,4 +1,4 @@
-﻿namespace PatientBooking.Api.Domain;
+namespace PatientBooking.Api.Domain;
 
 public class Admin
 {
