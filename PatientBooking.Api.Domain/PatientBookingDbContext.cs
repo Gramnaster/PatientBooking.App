@@ -19,6 +19,9 @@ public class PatientBookingDbContext(
     public DbSet<ClinicOperatingHours> ClinicOperatingHours { get; set; } = null!;
     public DbSet<RefreshToken> RefreshTokens { get; set; } = null!;
 
+    public DbSet<Booking> Bookings { get; set; } = null!;
+    public DbSet<BookingLineItem> BookingLineItems { get; set; } = null!;
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);

@@ -16,6 +16,7 @@ using PatientBooking.Api.Application.Services;
 using PatientBooking.Api.Common.Models.Config;
 using PatientBooking.Api.Domain;
 using PatientBooking.Api.Domain.Security;
+using Scalar.AspNetCore;
 using Serilog;
 using Serilog.Enrichers.Span;
 using Serilog.Events;
@@ -151,6 +152,7 @@ try
     // Register own business-logic services
     builder.Services.AddScoped<IUsersService, UsersService>();
     builder.Services.AddScoped<IClinicService, ClinicServices>();
+    builder.Services.AddScoped<IBookingService, BookingServices>();
 
     // Singletons
     builder.Services.AddSingleton(TimeProvider.System);
@@ -241,6 +243,7 @@ try
     if (app.Environment.IsDevelopment())
     {
         app.MapOpenApi();
+        app.MapScalarApiReference();
     }
 
     app.UseHttpsRedirection();

@@ -17,7 +17,10 @@ public class Booking
     public bool FirstTimeBooking { get; set; }
 
     public DateTimeOffset AppointmentStartUtc { get; set; }
+    public DateOnly AppointmentDateUtc { get; set; }
     public string IdempotencyKey { get; set; } = string.Empty;
+
+    public ICollection<BookingLineItem> LineItems { get; set; } = [];
 
     public DateTimeOffset? CreatedAtUtc { get; set; }
     public DateTimeOffset? UpdatedAtUtc { get; set; }
