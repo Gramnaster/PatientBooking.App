@@ -1,12 +1,7 @@
-using System;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
-using System.Text;
-
 namespace PatientBooking.Api.Application.DTOs.Clinic;
 
-public sealed record UpdateClinicDto : CreateClinicDto
+public sealed record UpdateClinicDto
 {
-    [Required]
-    public required int Id { get; set; }
+    public required string Name { get; set; }
+    public required string Address { get; set; }
 }

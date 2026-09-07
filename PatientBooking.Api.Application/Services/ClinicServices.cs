@@ -91,14 +91,6 @@ public class ClinicServices(PatientBookingDbContext patientBookingDbContext, Tim
 
     public async Task<Result> UpdateClinicAsync(int id, UpdateClinicDto updateDto, CancellationToken ct)
     {
-        // Route Id is authoritative - reject early if disagrees with payload's id
-        if (id != updateDto.Id)
-        {
-            return Result.BadRequest(
-                new ResultError(nameof(ErrorCodes.BadRequest), "Id route value does not match payload Id.")
-            );
-        }
-
         // Load entity to track -> Check if found
         Clinic? clinic = await patientBookingDbContext.Clinics.FirstOrDefaultAsync(
             c => c.Id == id && c.DeletedAtUtc == null,

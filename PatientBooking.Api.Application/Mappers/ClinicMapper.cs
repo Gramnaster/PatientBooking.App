@@ -36,6 +36,5 @@ internal static partial class ClinicMapper
     [MapperIgnoreTarget(nameof(Clinic.CreatedAtUtc))]
     [MapperIgnoreTarget(nameof(Clinic.UpdatedAtUtc))]
     [MapperIgnoreTarget(nameof(Clinic.DeletedAtUtc))]
-    [MapperIgnoreSource(nameof(UpdateClinicDto.Id))]
     public static partial void UpdateClinic(UpdateClinicDto dto, Clinic clinic);
 }

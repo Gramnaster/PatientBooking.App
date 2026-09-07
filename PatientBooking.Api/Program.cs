@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Serialization;
+using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
@@ -13,9 +14,11 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using PatientBooking.Api.Application.Contracts;
 using PatientBooking.Api.Application.Services;
+using PatientBooking.Api.Application.Validators.Clinic;
 using PatientBooking.Api.Common.Models.Config;
 using PatientBooking.Api.Domain;
 using PatientBooking.Api.Domain.Security;
+using PatientBooking.Api.Filters;
 using Scalar.AspNetCore;
 using Serilog;
 using Serilog.Enrichers.Span;
@@ -168,6 +171,9 @@ try
     builder.Services.AddSingleton<ILookupProtectorKeyRing, LookupProtectorKeyRing>();
     builder.Services.AddSingleton<ILookupProtector, LookupProtector>();
 
+    // FluentValidation - One call registers every IValidator<T> in App assembly
+    builder.Services.AddValidatorsFromAssemblyContaining<CreateClinicDtoValidator>();
+
     // Data Protection's own key ring, persisted to disk so okeys survive app restarts
     var dataProtectionKeyPath = builder.Configuration["DataProtection:KeyPath"];
     builder
@@ -200,8 +206,9 @@ try
 
     builder
         .Services
-        .AddControllers()
+        .AddControllers(options => options.Filters.Add<ValidationFilter>())
         .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+
     // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
     builder.Services.AddOpenApi();
 

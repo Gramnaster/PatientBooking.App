@@ -1,13 +1,8 @@
-using System;
-using System.CodeDom;
-using System.Collections.Generic;
 using System.Globalization;
 using System.Security.Claims;
-using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
-using MimeKit.Cryptography;
 using PatientBooking.Api.Application.Contracts;
 using PatientBooking.Api.Application.DTOs.Booking;
 using PatientBooking.Api.Application.Mappers;
@@ -113,7 +108,7 @@ public sealed class BookingServices(
 
     public async Task<Result<GetBookingDto>> CreateBookingAsync(
         CreateBookingDto dto,
-        string idempotencykey,
+        string idempotencyKey,
         CancellationToken ct
     )
     {
@@ -123,93 +118,30 @@ public sealed class BookingServices(
             return Result<GetBookingDto>.Forbid(ForbidPatientProfile);
         }
 
-        // Same key -> Same result. Scoped to caller's own PatientId, as guard for request that made it.
-        GetBookingDto? existing = await FindByIdempotencyKeyAsync(idempotencykey, patient.Id, ct);
-        if (existing is not null)
-        {
-            return Result<GetBookingDto>.Success(existing);
-        }
+        return await CreateBookingBodyAsync(dto.ClinicId, patient.Id, dto.AppointmentStartUtc, idempotencyKey, ct);
+    }
 
-        if (dto.AppointmentStartUtc <= clock.GetUtcNow())
-        {
-            return Result<GetBookingDto>.BadRequest(
-                new ResultError(nameof(ErrorCodes.BadRequest), "Appointment time must be in the future.")
-            );
-        }
-
-        // Normalize so DayOfWeek/TimeOfDay below aren't skewed by the client's Offset.
-        dto.AppointmentStartUtc = dto.AppointmentStartUtc.ToUniversalTime();
-
-        bool clinicExists = await patientBookingDbContext.Clinics.AnyAsync(
-            c => c.Id == dto.ClinicId && c.DeletedAtUtc == null,
+    // Employee only method. Missing the GetCurrentPatientAsync.
+    public async Task<Result<GetBookingDto>> CreateForClinicAsync(
+        int clinicId,
+        CreateBookingForPatientDto dto,
+        string idempotencyKey,
+        CancellationToken ct
+    )
+    {
+        bool patientExists = await patientBookingDbContext.Patients.AnyAsync(
+            p => p.Id == dto.PatientId && p.DeletedAtUtc == null,
             ct
         );
-        if (!clinicExists)
+
+        if (!patientExists)
         {
             return Result<GetBookingDto>.NotFound(
-                string.Create(CultureInfo.InvariantCulture, $"Clinic {dto.ClinicId} not found.")
+                string.Create(CultureInfo.InvariantCulture, $"Patient {dto.PatientId} not found.")
             );
         }
 
-        // AppointmentStartUtc's DayOfWeek and TimeOfDay are compared vs. clinic's hours
-        DayOfWeek appointmentDayOfWeek = dto.AppointmentStartUtc.DayOfWeek;
-        var appointmentTimeOfDay = TimeOnly.FromTimeSpan(dto.AppointmentStartUtc.TimeOfDay);
-
-        bool isWithinOperatingHours = await patientBookingDbContext.ClinicOperatingHours.AnyAsync(
-            h => h.ClinicId == dto.ClinicId && h.DayOfWeek == appointmentDayOfWeek && h.OpenTime !=
-                null && h.CloseTime != null && appointmentTimeOfDay >= h.OpenTime && appointmentTimeOfDay < h.CloseTime,
-            ct
-        );
-        if (!isWithinOperatingHours)
-        {
-            return Result<GetBookingDto>.Conflict(
-                "The clinic is closed at the requested appointment time. Try again the next day."
-            );
-        }
-
-        // First-time surcharge is scoped per clinic. Patient can be "new patient" at more than one clinic.
-        // Redone on every retry attempt so a concurrent request that wins the race is picked ip by the next attempt
-        // instead of double-charging the surcharge.
-        var appointmentDate = DateOnly.FromDateTime(dto.AppointmentStartUtc.UtcDateTime);
-
-        for (int attempt = 0; attempt < MaxBookingNumberAttempts; attempt++)
-        {
-            bool isFirstTime =
-                !await patientBookingDbContext.Bookings.AnyAsync(
-                    b => b.PatientId == patient.Id && b.ClinicId == dto.ClinicId && b.DeletedAtUtc == null,
-                    ct
-                );
-
-            Booking booking = await BuildBookingAsync(
-                dto,
-                patient.Id,
-                idempotencykey,
-                isFirstTime,
-                appointmentDate,
-                ct
-            );
-            await patientBookingDbContext.AddAsync(booking, ct);
-
-            try
-            {
-                await patientBookingDbContext.SaveChangesAsync(ct);
-            }
-            catch (DbUpdateException) when (attempt < MaxBookingNumberAttempts - 1)
-            {
-                // BookNumber race; self-heals - the next loop re-allocates
-                // If some slot conflict on (ClinicId, AppointmentStartUtc), goes below instead
-                patientBookingDbContext.ChangeTracker.Clear();
-                continue;
-            }
-            catch (DbUpdateException)
-            {
-                return Result<GetBookingDto>.Conflict("This appointment slot is no longer available.");
-            }
-
-            return Result<GetBookingDto>.Success(await ProjectByIdAsync(booking.Id, ct));
-        }
-
-        return Result<GetBookingDto>.Conflict("This appointment slot is no longer available.");
+        return await CreateBookingBodyAsync(clinicId, dto.PatientId, dto.AppointmentStartUtc, idempotencyKey, ct);
     }
 
     private Task<Patient?> GetCurrentPatientAsync(CancellationToken ct)
@@ -241,8 +173,9 @@ public sealed class BookingServices(
     }
 
     private async Task<Booking> BuildBookingAsync(
-        CreateBookingDto dto,
+        int clinicId,
         int patientId,
+        DateTimeOffset appointmentStartUtc,
         string idempotencyKey,
         bool isFirstTime,
         DateOnly appointmentDate,
@@ -250,17 +183,17 @@ public sealed class BookingServices(
     )
     {
         // 1. Get Booking Number
-        string bookingNumber = await AllocateBookingNumberAsync(dto.ClinicId, appointmentDate, ct);
+        string bookingNumber = await AllocateBookingNumberAsync(clinicId, appointmentDate, ct);
         DateTimeOffset now = clock.GetUtcNow();
 
         // 2. Get new booking entity
         Booking booking = new()
         {
-            ClinicId = dto.ClinicId,
+            ClinicId = clinicId,
             PatientId = patientId,
             BookingNumber = bookingNumber,
             FirstTimeBooking = isFirstTime,
-            AppointmentStartUtc = dto.AppointmentStartUtc,
+            AppointmentStartUtc = appointmentStartUtc,
             AppointmentDateUtc = appointmentDate,
             IdempotencyKey = idempotencyKey,
             CreatedAtUtc = now,
@@ -303,5 +236,163 @@ public sealed class BookingServices(
             : int.Parse(lastNumber.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture) + 1;
 
         return string.Create(CultureInfo.InvariantCulture, $"A{sequence:D3}");
+    }
+
+    private async Task<Result<GetBookingDto>> CreateBookingBodyAsync(
+        int clinicId,
+        int patientId,
+        DateTimeOffset appointmentStartUtc,
+        string idempotencyKey,
+        CancellationToken ct
+    )
+    {
+        // Same key -> Same result. Scoped to caller's own PatientId, as guard for request that made it.
+        GetBookingDto? existing = await FindByIdempotencyKeyAsync(idempotencyKey, patientId, ct);
+        if (existing is not null)
+        {
+            return Result<GetBookingDto>.Success(existing);
+        }
+
+        if (appointmentStartUtc <= clock.GetUtcNow())
+        {
+            return Result<GetBookingDto>.BadRequest(
+                new ResultError(nameof(ErrorCodes.BadRequest), "Appointment time must be in the future.")
+            );
+        }
+
+        // Normalize so DayOfWeek/TimeOfDay below aren't skewed by the client's Offset.
+        appointmentStartUtc = appointmentStartUtc.ToUniversalTime();
+
+        bool clinicExists = await patientBookingDbContext.Clinics.AnyAsync(
+            c => c.Id == clinicId && c.DeletedAtUtc == null,
+            ct
+        );
+        if (!clinicExists)
+        {
+            return Result<GetBookingDto>.NotFound(
+                string.Create(CultureInfo.InvariantCulture, $"Clinic {clinicId} not found.")
+            );
+        }
+
+        // AppointmentStartUtc's DayOfWeek and TimeOfDay are compared vs. clinic's hours
+        DayOfWeek appointmentDayOfWeek = appointmentStartUtc.DayOfWeek;
+        var appointmentTimeOfDay = TimeOnly.FromTimeSpan(appointmentStartUtc.TimeOfDay);
+
+        bool isWithinOperatingHours = await patientBookingDbContext.ClinicOperatingHours.AnyAsync(
+            h => h.ClinicId == clinicId && h.DayOfWeek == appointmentDayOfWeek && h.OpenTime != null && h.CloseTime !=
+                null && appointmentTimeOfDay >= h.OpenTime && appointmentTimeOfDay < h.CloseTime,
+            ct
+        );
+        if (!isWithinOperatingHours)
+        {
+            return Result<GetBookingDto>.Conflict(
+                "The clinic is closed at the requested appointment time. Try again the next day."
+            );
+        }
+
+        // First-time surcharge is scoped per clinic. Patient can be "new patient" at more than one clinic.
+        // Redone on every retry attempt so a concurrent request that wins the race is picked ip by the next attempt
+        // instead of double-charging the surcharge.
+        var appointmentDate = DateOnly.FromDateTime(appointmentStartUtc.UtcDateTime);
+
+        for (int attempt = 0; attempt < MaxBookingNumberAttempts; attempt++)
+        {
+            bool isFirstTime =
+                !await patientBookingDbContext.Bookings.AnyAsync(
+                    b => b.PatientId == patientId && b.ClinicId == clinicId && b.DeletedAtUtc == null,
+                    ct
+                );
+
+            Booking booking = await BuildBookingAsync(
+                clinicId,
+                patientId,
+                appointmentStartUtc,
+                idempotencyKey,
+                isFirstTime,
+                appointmentDate,
+                ct
+            );
+            await patientBookingDbContext.AddAsync(booking, ct);
+
+            try
+            {
+                await patientBookingDbContext.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException) when (attempt < MaxBookingNumberAttempts - 1)
+            {
+                // BookNumber race; self-heals - the next loop re-allocates
+                // If some slot conflict on (ClinicId, AppointmentStartUtc), goes below instead
+                patientBookingDbContext.ChangeTracker.Clear();
+                continue;
+            }
+            catch (DbUpdateException)
+            {
+                return Result<GetBookingDto>.Conflict("This appointment slot is no longer available.");
+            }
+
+            return Result<GetBookingDto>.Success(await ProjectByIdAsync(booking.Id, ct));
+        }
+
+        return Result<GetBookingDto>.Conflict("This appointment slot is no longer available.");
+    }
+
+    async Task<Result<GetBookingDto>> IBookingService.GetByIdForClinicAsync(
+        int clinicId,
+        int bookingId,
+        CancellationToken ct
+    )
+    {
+        GetBookingDto? booking = await patientBookingDbContext
+            .Bookings
+            .AsNoTracking()
+            .Where(b => b.Id == bookingId && b.ClinicId == clinicId && b.DeletedAtUtc == null)
+            .ProjectToGetBookingDto()
+            .FirstOrDefaultAsync(ct);
+
+        return booking is null
+            ? Result<GetBookingDto>.NotFound(
+                string.Create(CultureInfo.InvariantCulture, $"Booking {bookingId} not found.")
+            )
+            : Result<GetBookingDto>.Success(booking);
+    }
+
+    async Task<Result<IReadOnlyList<GetBookingDto>>> IBookingService.ListBookingsByClinicAsync(
+        int clinicId,
+        CancellationToken ct
+    )
+    {
+        List<GetBookingDto> bookings = await patientBookingDbContext
+            .Bookings
+            .AsNoTracking()
+            .Where(b => b.ClinicId == clinicId && b.DeletedAtUtc == null)
+            .OrderByDescending(b => b.AppointmentStartUtc)
+            .ProjectToGetBookingDto()
+            .ToListAsync(ct);
+
+        return Result<IReadOnlyList<GetBookingDto>>.Success(bookings);
+    }
+
+    async Task<Result> IBookingService.CancelForClinicAsync(int clinicId, int bookingId, CancellationToken ct)
+    {
+        Booking? booking = await patientBookingDbContext.Bookings.FirstOrDefaultAsync(
+            b => b.Id == bookingId && b.ClinicId == clinicId && b.DeletedAtUtc == null,
+            ct
+        );
+
+        if (booking is null)
+        {
+            return Result.NotFound(string.Create(CultureInfo.InvariantCulture, $"Booking {bookingId} not found."));
+        }
+
+        // Same six-hour notice rule as the patient path - no staff override.
+        if (booking.AppointmentStartUtc - clock.GetUtcNow() < MinimumCancellationNotice)
+        {
+            return Result.Conflict("Bookings can only be cancelled at least 6 hours before the appointment.");
+        }
+
+        booking.DeletedAtUtc = clock.GetUtcNow();
+        await patientBookingDbContext.SaveChangesAsync(ct);
+
+        return Result.Success();
     }
 }

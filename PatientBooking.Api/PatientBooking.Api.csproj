@@ -66,7 +66,6 @@
 	<ItemGroup>
 	  <Folder Include="BackgroundServices\" />
 	  <Folder Include="CachePolicies\" />
-	  <Folder Include="Filters\" />
 	  <Folder Include="Handlers\" />
 	  <Folder Include="Hubs\" />
 	  <Folder Include="Middleware\" />
