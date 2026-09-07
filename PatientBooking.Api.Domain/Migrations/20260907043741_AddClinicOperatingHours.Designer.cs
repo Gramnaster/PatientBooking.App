@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PatientBooking.Api.Domain;
 
@@ -11,9 +12,11 @@ using PatientBooking.Api.Domain;
 namespace PatientBooking.Api.Domain.Migrations
 {
     [DbContext(typeof(PatientBookingDbContext))]
-    partial class PatientBookingDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260907043741_AddClinicOperatingHours")]
+    partial class AddClinicOperatingHours
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -299,17 +302,13 @@ namespace PatientBooking.Api.Domain.Migrations
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasColumnType("nvarchar(450)")
+                        .HasColumnType("nvarchar(max)")
                         .UseCollation("SQL_Latin1_General_CP1_CI_AS");
 
                     b.Property<DateTimeOffset?>("UpdatedAtUtc")
                         .HasColumnType("datetimeoffset");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("Name")
-                        .IsUnique()
-                        .HasFilter("[DeletedAtUtc] IS NULL");
 
                     b.ToTable("Clinics");
                 });
@@ -328,10 +327,8 @@ namespace PatientBooking.Api.Domain.Migrations
                     b.Property<TimeOnly?>("CloseTime")
                         .HasColumnType("time");
 
-                    b.Property<string>("DayOfWeek")
-                        .IsRequired()
-                        .HasMaxLength(9)
-                        .HasColumnType("nvarchar(9)");
+                    b.Property<int>("DayOfWeek")
+                        .HasColumnType("int");
 
                     b.Property<TimeOnly?>("OpenTime")
                         .HasColumnType("time");

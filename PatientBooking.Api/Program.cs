@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
@@ -142,10 +144,13 @@ try
             };
         });
 
+    builder.Services.Configure<AdminSeedSettings>(builder.Configuration.GetSection("AdminSeed"));
+
     builder.Services.AddAuthorization();
 
     // Register own business-logic services
     builder.Services.AddScoped<IUsersService, UsersService>();
+    builder.Services.AddScoped<IClinicService, ClinicServices>();
 
     // Singletons
     builder.Services.AddSingleton(TimeProvider.System);
@@ -191,11 +196,43 @@ try
             options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(3);
         });
 
-    builder.Services.AddControllers();
+    builder
+        .Services
+        .AddControllers()
+        .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
     // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
     builder.Services.AddOpenApi();
 
     var app = builder.Build();
+
+    await using (var scope = app.Services.CreateAsyncScope())
+    {
+        var db = scope.ServiceProvider.GetRequiredService<PatientBookingDbContext>();
+        var seedEmail = scope.ServiceProvider.GetRequiredService<IOptions<AdminSeedSettings>>().Value.Email;
+
+        if (!string.IsNullOrWhiteSpace(seedEmail))
+        {
+            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            ApplicationUser? user = await userManager.FindByEmailAsync(seedEmail);
+
+            if (user is null)
+            {
+                Log.Warning("AdminSeed configured but no matching registered user was found. Skipping...");
+            }
+            else
+            {
+                bool isAlreadyAdmin = await db.Admins.AnyAsync(a => a.UserId == user.Id, CancellationToken.None);
+
+                if (!isAlreadyAdmin)
+                {
+                    db.Admins.Add(new Admin { UserId = user.Id, AdminNumber = "Admin-001", });
+
+                    await db.SaveChangesAsync(CancellationToken.None);
+                    Log.Information("Seeded Admin for userId {UserId}", user.Id);
+                }
+            }
+        }
+    }
 
     // Identity's built-in endpoints need different prefix or the two will collide
     app.MapGroup("api/defaultauth").MapIdentityApi<ApplicationUser>();

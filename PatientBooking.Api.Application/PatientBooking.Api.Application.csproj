@@ -44,8 +44,4 @@
 		<!-- All analyzers are applied globally via Directory.Build.props -->
 	</ItemGroup>
 
-	<ItemGroup>
-	  <Folder Include="Mappers\" />
-	</ItemGroup>
-
 </Project>

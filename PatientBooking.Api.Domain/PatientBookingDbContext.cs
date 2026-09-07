@@ -16,12 +16,12 @@ public class PatientBookingDbContext(
     public DbSet<Patient> Patients { get; set; } = null!;
     public DbSet<Employee> Employees { get; set; } = null!;
     public DbSet<Clinic> Clinics { get; set; } = null!;
+    public DbSet<ClinicOperatingHours> ClinicOperatingHours { get; set; } = null!;
     public DbSet<RefreshToken> RefreshTokens { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
-        builder.ApplyConfigurationsFromAssembly(typeof(PatientBookingDbContext).Assembly);
 
         builder.ApplyConfigurationsFromAssembly(
             Assembly.GetExecutingAssembly(),

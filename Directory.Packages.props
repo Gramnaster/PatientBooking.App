@@ -60,6 +60,7 @@
     <PackageVersion Include="AsyncFixer" Version="2.1.0" />
     <PackageVersion Include="IDisposableAnalyzers" Version="4.0.8" />
     <PackageVersion Include="SharpSource" Version="1.33.3" />
+    <PackageVersion Include="curb" Version="0.7.2" />
     <!-- Applied globally via Directory.Build.props - the single pin that resolves the
          10.25.0.139117 (Directory.Build.props) vs 10.29.0.143774 (per-project <Update>)
          drift that existed before Central Package Management. -->

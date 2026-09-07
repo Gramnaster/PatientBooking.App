@@ -12,6 +12,7 @@ public class Clinic
     public int EmployeeCount { get; set; }
     public ICollection<Employee> Employees { get; set; } = [];
     public ICollection<Patient> Patients { get; set; } = [];
+    public ICollection<ClinicOperatingHours> OperatingHours { get; set; } = [];
 
     public DateTimeOffset? CreatedAtUtc { get; set; }
     public DateTimeOffset? UpdatedAtUtc { get; set; }

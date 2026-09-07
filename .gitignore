@@ -371,3 +371,5 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/.tmp-v3-plan-revision-20260905
+/.tmp-v3-final-corrections-20260905

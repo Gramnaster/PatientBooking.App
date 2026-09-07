@@ -1,9 +1,9 @@
 @PatientBooking.Api_HostAddress = https://localhost:7195
 @json = application/json
-@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJQYXRpZW50Qm9va2luZ0FwaUNsaWVudCIsImlzcyI6IlBhdGllbnRCb29raW5nQXBpIiwiZXhwIjoxNzg4MjUzNDQ4LCJzdWIiOiJlODEyMTY5My0zMWUzLTQyZjQtOGFlZC0yYjM2N2E3NTBkZWYiLCJlbWFpbCI6InVzZXI1QGVtYWlsLmNvbSIsImp0aSI6ImJjYjYwNjIxLTJkNWItNDRhOC1hOTgzLTQ3OWYwYTExNThlNCIsIm5hbWUiOiJKb2huIExhc3QiLCJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL3JvbGUiOiJQYXRpZW50IiwiaWF0IjoxNzg4MjUyNTQ4LCJuYmYiOjE3ODgyNTI1NDh9.vJMNVOFeSJI1_rhLYHU8ZvNjLARuTy4Se4lNgeV_24A
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJQYXRpZW50Qm9va2luZ0FwaUNsaWVudCIsImlzcyI6IlBhdGllbnRCb29raW5nQXBpIiwiZXhwIjoxNzg4NzcwNDgxLCJzdWIiOiJkNGNkZjAwZC03NmI2LTQzMjAtODkxMi0zZmJjYjU2ZjdiODAiLCJlbWFpbCI6ImFkbWluMUBlbWFpbC5jb20iLCJqdGkiOiJjMDVmMzRkOC05NjExLTRkZGYtYTgzMi03NWJiZGNjYWEzZDMiLCJuYW1lIjoiSm9obiBMYXN0IiwiaHR0cDovL3NjaGVtYXMubWljcm9zb2Z0LmNvbS93cy8yMDA4LzA2L2lkZW50aXR5L2NsYWltcy9yb2xlIjoiQWRtaW4iLCJpYXQiOjE3ODg3Njk1ODEsIm5iZiI6MTc4ODc2OTU4MX0.ae_iHx11kNlj3Czk8DHwPQz3nAs-ahLJW18Zrc6HiRk
 # @accessToken = {{login.response.body.$.token}}
 
-@pendingToken = {{login.response.body.$.pendingToken}}
+# @pendingToken = {{login.response.body.$.pendingToken}}
 
 ###
 
@@ -11,7 +11,7 @@ POST {{PatientBooking.Api_HostAddress}}/api/auth/register
 Content-Type: application/json
 
 {
-  "Email": "user6@email.com",
+  "Email": "admin1@email.com",
   "Password": "Password!!!123",
   "FirstName": "John",
   "LastName": "Last"
@@ -23,7 +23,7 @@ POST {{PatientBooking.Api_HostAddress}}/api/auth/login
 Content-Type: application/json
 
 {
-  "Email": "user6@email.com",
+  "Email": "admin1@email.com",
   "Password": "Password!!!123"
 }
 
@@ -34,7 +34,7 @@ Content-Type: application/json
 GET {{PatientBooking.Api_HostAddress}}/api/auth/confirm-email?userId={{userId}}&token={{token}}
 Content-Type: application/json
 {
-  "Email": "user3@email.com"
+  "Email": "admin1@email.com"
 }
 
 ###
@@ -75,5 +75,54 @@ Content-Type: application/json
 {
   "Code": "107215"
 }
+
+###
+
+GET {{PatientBooking.Api_HostAddress}}/api/clinic
+
+###
+
+@id=1
+GET {{PatientBooking.Api_HostAddress}}/api/clinic/{{id}}
+
+###
+
+POST {{PatientBooking.Api_HostAddress}}/api/clinic
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "Name": "Clinic06",
+  "Address": "789 Address Street"
+}
+
+###
+PUT {{PatientBooking.Api_HostAddress}}/api/clinic/{{id}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  //UpdateClinicDto
+}
+
+###
+# @id=1
+GET {{PatientBooking.Api_HostAddress}}/api/clinic/{{id}}/operating-hours
+
+###
+@id=1004
+PUT {{PatientBooking.Api_HostAddress}}/api/clinic/{{id}}/operating-hours
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+ [
+    { "DayOfWeek": "Sunday", "OpenTime": null, "CloseTime": null },
+    { "DayOfWeek": "Monday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
+    { "DayOfWeek": "Tuesday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
+    { "DayOfWeek": "Wednesday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
+    { "DayOfWeek": "Thursday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
+    { "DayOfWeek": "Friday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
+    { "DayOfWeek": "Saturday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" }
+  ]
 
 ###

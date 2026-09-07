@@ -26,6 +26,6 @@
     <PackageReference Include="IDisposableAnalyzers" PrivateAssets="all" />
     <PackageReference Include="SharpSource" PrivateAssets="all" />
     <PackageReference Include="ErrorProne.NET.CoreAnalyzers" PrivateAssets="all" />
-    <PackageReference Include="curb" Version="*" PrivateAssets="all" />
+    <PackageReference Include="curb" PrivateAssets="all" />
   </ItemGroup>
 </Project>

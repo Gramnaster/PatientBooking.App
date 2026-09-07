@@ -24,8 +24,8 @@ public sealed class ApplicationUserConfiguration(
         );
 
         var personalDataConverter = new ValueConverter<string, string>(
-            v => personalDataProtector.Protect(v)!,
-            v => personalDataProtector.Unprotect(v)!
+            v => personalDataProtector.Protect(v),
+            v => personalDataProtector.Unprotect(v)
         );
 
         var lookupConverter = new ValueConverter<string?, string?>(
