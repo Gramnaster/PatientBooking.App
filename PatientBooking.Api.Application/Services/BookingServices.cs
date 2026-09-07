@@ -130,6 +130,16 @@ public sealed class BookingServices(
             return Result<GetBookingDto>.Success(existing);
         }
 
+        if (dto.AppointmentStartUtc <= clock.GetUtcNow())
+        {
+            return Result<GetBookingDto>.BadRequest(
+                new ResultError(nameof(ErrorCodes.BadRequest), "Appointment time must be in the future.")
+            );
+        }
+
+        // Normalize so DayOfWeek/TimeOfDay below aren't skewed by the client's Offset.
+        dto.AppointmentStartUtc = dto.AppointmentStartUtc.ToUniversalTime();
+
         bool clinicExists = await patientBookingDbContext.Clinics.AnyAsync(
             c => c.Id == dto.ClinicId && c.DeletedAtUtc == null,
             ct
@@ -166,7 +176,7 @@ public sealed class BookingServices(
         {
             bool isFirstTime =
                 !await patientBookingDbContext.Bookings.AnyAsync(
-                    b => b.PatientId == patient.Id && b.ClinicId == dto.ClinicId,
+                    b => b.PatientId == patient.Id && b.ClinicId == dto.ClinicId && b.DeletedAtUtc == null,
                     ct
                 );
 
