@@ -9,7 +9,7 @@ public class Employee
     public int Id { get; set; }
     public required string UserId { get; set; }
     public ApplicationUser? User { get; set; }
-    public string EmployeeNumber { get; set; } = string.Empty;
+    public string? EmployeeNumber { get; set; }
     public int? ClinicId { get; set; }
     public Clinic? Clinic { get; set; }
     public DateTimeOffset? CreatedAtUtc { get; set; }

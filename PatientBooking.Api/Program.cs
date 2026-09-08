@@ -156,6 +156,7 @@ try
     builder.Services.AddScoped<IUsersService, UsersService>();
     builder.Services.AddScoped<IClinicService, ClinicServices>();
     builder.Services.AddScoped<IBookingService, BookingServices>();
+    builder.Services.AddScoped<IEmployeeService, EmployeeService>();
 
     // Singletons
     builder.Services.AddSingleton(TimeProvider.System);

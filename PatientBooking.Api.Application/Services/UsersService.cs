@@ -38,7 +38,6 @@ public class UsersService(
     private const string _userNotFound = "User not found.";
     private const string _invalidCredentials = "Invalid Credentials.";
     private const string _invalidRefreshTokens = "Invalid or expired refresh tokens.";
-    private const int MaxCodeAllocationAttempts = 3;
 
     // 2FA Properties
     private const int PendingTokenMinutes = 5;
@@ -76,19 +75,19 @@ public class UsersService(
 
         // MRN needs patient.Id, which doesn't exist until this save assigns it
         // so Patient row is saved once without it. Fail = user created with no Patient profile
-        Patient patient = new()
-        {
-            UserId = user.Id,
-        };
+        Patient patient = new() { UserId = user.Id, };
 
         patientBookingDbContext.Patients.Add(patient);
 
         try
         {
             await patientBookingDbContext.SaveChangesAsync(ct);
-
-            patient.MedicalRecordNumber = IdentifierCodeEncoder.Encode(patient.Id, IdentifierCodeEncoder.MedicalRecordNumberShape);
+            patient.MedicalRecordNumber = IdentifierCodeEncoder.Encode(
+                patient.Id,
+                IdentifierCodeEncoder.MedicalRecordNumberShape
+            );
             await patientBookingDbContext.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
         }
         catch (DbUpdateException)
         {
@@ -110,21 +109,6 @@ public class UsersService(
         };
 
         return Result<RegisteredUserDto>.Success(registeredUserDto);
-    }
-
-    private async Task<string> AllocateMedicalRecordNumberAsync(CancellationToken ct)
-    {
-        string? lastMrn = await patientBookingDbContext.Patients
-            .Where(p => p.MedicalRecordNumber != null)
-            .OrderByDescending(p => p.MedicalRecordNumber)
-            .Select(p => p.MedicalRecordNumber)
-            .FirstOrDefaultAsync(ct);
-
-        int sequence = lastMrn is null
-            ? 1
-            : int.Parse(lastMrn.AsSpan("MRN-".Length), NumberStyles.None, CultureInfo.InvariantCulture) + 1;
-
-        return string.Create(CultureInfo.InvariantCulture, $"MRN-{sequence:D6}");
     }
 
     public async Task<Result> ConfirmEmailAsync(string userId, string token)
