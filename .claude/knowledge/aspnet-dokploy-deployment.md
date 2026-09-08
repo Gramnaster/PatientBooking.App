@@ -75,6 +75,20 @@ mapping. Do not automatically attribute every 404 to the database failure. Earli
 Development-only Scalar/OpenAPI advice is stale: current local `Program.cs` maps both
 outside an environment guard. Deployment of that change has not been verified here.
 
+## CI Docker restore artifacts (2026-09-09)
+
+The supplied GitHub Actions log showed a successful container restore followed by
+`NETSDK1064` (AsyncFixer 2.1.0 missing) during `dotnet publish --no-restore`, after
+`COPY . .`. The workflow builds on the runner before passing its working directory
+as Docker's context. Root-only `bin/` and `obj/` exclusions allowed nested project
+artifacts to overwrite the container's restore metadata with host package paths.
+
+Use `**/bin/` and `**/obj/` in the root `.dockerignore` to exclude these directories
+at every depth. Preserve the cached restore stage; adding a package or removing
+`--no-restore` does not address the leaking build artifacts. See
+[Docker ignore syntax](https://docs.docker.com/build/concepts/context/#dockerignore-files)
+and [Microsoft's NETSDK1064 guidance](https://learn.microsoft.com/en-us/dotnet/core/tools/sdk-errors/netsdk1064).
+
 ## Configuration caveats to recheck
 
 - Compose connects the API to `default` and external `dokploy-network`; SQL uses the
@@ -110,8 +124,11 @@ No PostgreSQL deployment or data conversion has been tested in this project.
 ## Verification boundary and maintenance
 
 Earlier work recorded a passing Release API build and Compose configuration validation.
-This knowledge capture rechecked local source only; it did not build an image, run an
-integration test, inspect the VPS or verify public endpoint recovery. Record later checks
+The initial knowledge capture rechecked local source only. On 2026-09-09, after the
+recursive `.dockerignore` fix, a local Docker image build passed, including restore
+and Release publish with existing host `obj` files present. Existing analyzer warnings
+remained. GitHub Actions has not been rerun by the agent; no database integration test,
+VPS inspection or public endpoint recovery check was performed. Record later checks
 with dates and distinguish agent-observed results from user reports.
 
 Update this note when deployment decisions change. Keep credentials out, link to the
