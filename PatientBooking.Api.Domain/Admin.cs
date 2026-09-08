@@ -7,6 +7,6 @@ public class Admin
     public ApplicationUser? User { get; set; }
     public string? AdminNumber { get; set; }
     public DateTimeOffset? CreatedAtUtc { get; set; }
-    public DateTimeOffset? DateTimeOffset { get; set; }
+    public DateTimeOffset? UpdatedAtUtc { get; set; }
     public DateTimeOffset? DeletedAtUtc { get; set; }
 }

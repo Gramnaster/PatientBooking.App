@@ -83,10 +83,10 @@ public sealed class BookingServices(
             return Result.Forbid(ForbidPatientProfile);
         }
 
-        Booking? booking = await patientBookingDbContext.Bookings.FirstOrDefaultAsync(
-            b => b.Id == id && b.PatientId == patient.Id && b.DeletedAtUtc == null,
-            ct
-        );
+        Booking? booking = await patientBookingDbContext
+            .Bookings
+            .Include(b => b.LineItems)
+            .FirstOrDefaultAsync(b => b.Id == id && b.PatientId == patient.Id && b.DeletedAtUtc == null, ct);
 
         if (booking is null)
         {
@@ -100,10 +100,24 @@ public sealed class BookingServices(
             return Result.Conflict("Bookings can only be cancelled at least 6 hours before the appointment.");
         }
 
-        booking.DeletedAtUtc = clock.GetUtcNow();
+        CancelBookingWithLineItems(booking);
         await patientBookingDbContext.SaveChangesAsync(ct);
 
         return Result.Success();
+    }
+
+    private void CancelBookingWithLineItems(Booking booking)
+    {
+        DateTimeOffset now = clock.GetUtcNow();
+
+        booking.UpdatedAtUtc = now;
+        booking.DeletedAtUtc = now;
+
+        foreach (BookingLineItem lineItem in booking.LineItems)
+        {
+            lineItem.UpdatedAtUtc = now;
+            lineItem.DeletedAtUtc = now;
+        }
     }
 
     public async Task<Result<GetBookingDto>> CreateBookingAsync(
@@ -374,10 +388,10 @@ public sealed class BookingServices(
 
     async Task<Result> IBookingService.CancelForClinicAsync(int clinicId, int bookingId, CancellationToken ct)
     {
-        Booking? booking = await patientBookingDbContext.Bookings.FirstOrDefaultAsync(
-            b => b.Id == bookingId && b.ClinicId == clinicId && b.DeletedAtUtc == null,
-            ct
-        );
+        Booking? booking = await patientBookingDbContext
+            .Bookings
+            .Include(b => b.LineItems)
+            .FirstOrDefaultAsync(b => b.Id == bookingId && b.ClinicId == clinicId && b.DeletedAtUtc == null, ct);
 
         if (booking is null)
         {
@@ -390,7 +404,7 @@ public sealed class BookingServices(
             return Result.Conflict("Bookings can only be cancelled at least 6 hours before the appointment.");
         }
 
-        booking.DeletedAtUtc = clock.GetUtcNow();
+        CancelBookingWithLineItems(booking);
         await patientBookingDbContext.SaveChangesAsync(ct);
 
         return Result.Success();

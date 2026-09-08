@@ -57,6 +57,7 @@ public class UsersService(
             FirstName = registerUserDto.FirstName,
             LastName = registerUserDto.LastName,
             UserName = registerUserDto.Email,
+            CreatedAtUtc = clock.GetUtcNow(),
         };
 
         await using var transaction = await patientBookingDbContext.Database.BeginTransactionAsync(ct);
@@ -75,7 +76,7 @@ public class UsersService(
 
         // MRN needs patient.Id, which doesn't exist until this save assigns it
         // so Patient row is saved once without it. Fail = user created with no Patient profile
-        Patient patient = new() { UserId = user.Id, };
+        Patient patient = new() { UserId = user.Id, CreatedAtUtc = clock.GetUtcNow() };
 
         patientBookingDbContext.Patients.Add(patient);
 
@@ -91,7 +92,6 @@ public class UsersService(
         }
         catch (DbUpdateException)
         {
-            await userManager.DeleteAsync(user);
             return Result<RegisteredUserDto>.Conflict("Could not create a patient profile. Please try again.");
         }
 
@@ -768,6 +768,7 @@ public class UsersService(
                 FirstName = payload.GivenName ?? string.Empty,
                 LastName = payload.FamilyName ?? string.Empty,
                 EmailConfirmed = true,
+                CreatedAtUtc = clock.GetUtcNow(),
             };
 
             IdentityResult createResult = await userManager.CreateAsync(user);
@@ -776,7 +777,7 @@ public class UsersService(
                 return Result<ApplicationUser>.Failure(ToResultError(createResult.Errors));
             }
 
-            patientBookingDbContext.Patients.Add(new Patient { UserId = user.Id });
+            patientBookingDbContext.Patients.Add(new Patient { UserId = user.Id, CreatedAtUtc = clock.GetUtcNow() });
             await patientBookingDbContext.SaveChangesAsync(ct);
         }
 
@@ -808,6 +809,7 @@ public class UsersService(
         if (user.DeletedAtUtc is not null)
             return Result.Success();
 
+        user.UpdatedAtUtc = clock.GetUtcNow();
         user.DeletedAtUtc = clock.GetUtcNow();
         user.LockoutEnabled = true;
         user.LockoutEnd = DateTimeOffset.MaxValue;

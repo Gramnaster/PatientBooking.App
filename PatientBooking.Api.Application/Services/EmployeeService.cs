@@ -70,6 +70,7 @@ public sealed class EmployeeService(
             LastName = createDto.LastName,
             // No need to click email confirmation for employees
             EmailConfirmed = true,
+            CreatedAtUtc = clock.GetUtcNow(),
         };
 
         await using var transaction = await patientBookingDbContext.Database.BeginTransactionAsync(ct);
@@ -87,7 +88,7 @@ public sealed class EmployeeService(
         }
 
         // EmployeeNumber needs employee.Id, which only exists once row has been saved
-        Employee employee = new() { UserId = user.Id, ClinicId = createDto.ClinicId, };
+        Employee employee = new() { UserId = user.Id, ClinicId = createDto.ClinicId, CreatedAtUtc = clock.GetUtcNow() };
         patientBookingDbContext.Add(employee);
 
         try
@@ -104,7 +105,6 @@ public sealed class EmployeeService(
         }
         catch (DbUpdateException)
         {
-            await userManager.DeleteAsync(user);
             return Result<GetEmployeeDto>.Conflict("Could not create an employee profile. Please try again.");
         }
 
@@ -163,6 +163,7 @@ public sealed class EmployeeService(
             return Result.NotFound(string.Create(CultureInfo.InvariantCulture, $"Employee {id} not found."));
         }
 
+        employee.UpdatedAtUtc = clock.GetUtcNow();
         employee.DeletedAtUtc = clock.GetUtcNow();
         await patientBookingDbContext.SaveChangesAsync(ct);
 

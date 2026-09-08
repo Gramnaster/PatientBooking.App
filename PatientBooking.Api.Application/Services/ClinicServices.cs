@@ -134,6 +134,7 @@ public class ClinicServices(PatientBookingDbContext patientBookingDbContext, Tim
             return Result.NotFound(string.Create(CultureInfo.InvariantCulture, $"Clinic {id} not found."));
         }
 
+        clinic.UpdatedAtUtc = clock.GetUtcNow();
         clinic.DeletedAtUtc = clock.GetUtcNow();
         await patientBookingDbContext.SaveChangesAsync(ct);
 

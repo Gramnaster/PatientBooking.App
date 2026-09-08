@@ -235,7 +235,8 @@ try
 
                 if (!isAlreadyAdmin)
                 {
-                    Admin admin = new() { UserId = user.Id };
+                    var seedClock = scope.ServiceProvider.GetRequiredService<TimeProvider>();
+                    Admin admin = new() { UserId = user.Id, CreatedAtUtc = seedClock.GetUtcNow() };
                     db.Admins.Add(admin);
 
                     await using var transaction = await db.Database.BeginTransactionAsync(CancellationToken.None);
