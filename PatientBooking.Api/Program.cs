@@ -47,9 +47,12 @@ Log.Logger = new LoggerConfiguration()
 
 try
 {
-    Log.Information("Starting the PatientBooking API...");
+    var migrateOnly = args.Contains("--migrate", StringComparer.Ordinal);
+    Log.Information(migrateOnly ? "Applying database migrations..." : "Starting the PatientBooking API...");
 
-    var builder = WebApplication.CreateBuilder(args);
+    var builder = WebApplication.CreateBuilder(
+        args.Where(arg => !string.Equals(arg, "--migrate", StringComparison.Ordinal)).ToArray()
+    );
 
     builder.Host.UseSerilog(
         (context, services, configuration) => configuration
@@ -220,6 +223,19 @@ try
 
     var app = builder.Build();
 
+    if (migrateOnly)
+    {
+        await using (app)
+        {
+            await using var migrationScope = app.Services.CreateAsyncScope();
+            var migrationDb = migrationScope.ServiceProvider.GetRequiredService<PatientBookingDbContext>();
+            await migrationDb.Database.MigrateAsync();
+            Log.Information("Database migrations completed successfully.");
+        }
+
+        return;
+    }
+
     await using (var scope = app.Services.CreateAsyncScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<PatientBookingDbContext>();
@@ -298,6 +314,7 @@ catch (HostAbortedException ex)
 catch (Exception ex)
 {
     Log.Fatal(ex, "Application terminated unexpectedly.");
+    Environment.ExitCode = 1;
 }
 finally
 {

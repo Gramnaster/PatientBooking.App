@@ -64,38 +64,30 @@ services:
       - default
       - dokploy-network
 
-  # Runs migrations on demand from a terminal - never starts on a normal `docker compose up`
-  # (that's what the "tools" profile excludes it from). Trigger manually, from the VPS:
+  # Normally run in Dokploy's api terminal: dotnet PatientBooking.Api.dll --migrate
+  # This optional service supports manual migrations when the API cannot start.
+  # Never starts on a normal `docker compose up` (excluded by the "tools" profile).
   # Use the same Compose project name and .env as the running Dokploy deployment.
   # docker compose -p patientbooking-api-qns9o0 --env-file .env -f ./docker-compose.yml run --build --rm migrator
   migrator:
     build:
       context: .
       dockerfile: Dockerfile
-      target: build
     profiles: ["tools"]
     depends_on:
       sqlserver:
         condition: service_healthy
     environment:
-      # EF tooling builds the application host and resolves the DbContext, so it needs the
+      # Migration mode builds the application host and resolves the DbContext, so it needs the
       # same connection string, JWT key, and lookup-protection key as the API.
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__PatientBookingDbConnectionString: "Server=sqlserver,1433;Database=PatientBookingDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
       JwtSettings__Key: ${JWT_SETTINGS_KEY}
       LookupProtection__Key: ${LOOKUP_PROTECTION_KEY}
-    working_dir: /src
     entrypoint:
       - dotnet
-      - ef
-      - database
-      - update
-      - --project
-      - PatientBooking.Api.Domain
-      - --startup-project
-      - PatientBooking.Api
-      - --connection
-      - "Server=sqlserver,1433;Database=PatientBookingDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
+      - PatientBooking.Api.dll
+      - --migrate
 
 volumes:
   sqlserver-data:
