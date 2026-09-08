@@ -1,0 +1,67 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  # GHCR requires an all-lowercase image path - the repo itself is Gramnaster/PatientBooking.App.
+  IMAGE_NAME: gramnaster/patientbooking.app
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+
+      - run: dotnet restore PatientBooking.App.slnx
+      - run: dotnet build PatientBooking.App.slnx -c Release --no-restore
+      # dotnet test intentionally omitted - no test project exists yet (see testing.md).
+      # Add it here once xUnit + WebApplicationFactory + Testcontainers land.
+
+  publish:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Reuses the layer the Dockerfile's COPY-csproj-first trick creates (the restore layer)
+          # across runs - GitHub-hosted runners are ephemeral and have no local Docker cache otherwise.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

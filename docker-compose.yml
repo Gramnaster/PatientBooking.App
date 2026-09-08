@@ -10,30 +10,50 @@ services:
       MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
     volumes:
       - sqlserver-data:/var/opt/mssql
-    # Drop this port mapping entirely once nothing outside the Docker network needs direct DB
-    # access - the api service below reaches it over the internal Compose network regardless.
-    ports:
-      - "1435:1433"
+    # No host port mapping - the api service reaches this over the internal Compose network by
+    # service name regardless, and exposing 1433 on a public VPS puts the sa login in reach of the
+    # whole internet. For ad hoc SSMS/Azure Data Studio access, SSH-tunnel instead:
+    # ssh -L 1433:localhost:1433 <user>@<vps-host>
+    healthcheck:
+      # mssql-tools18 (not mssql-tools) ships in this image as of SQL Server 2022 CU14 - the -C
+      # flag trusts the server cert since ODBC 18 defaults to encrypted connections.
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -Q "SELECT 1"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   api:
     # image + build together: `docker compose up --build` (local dev) builds and tags this image
     # locally; `docker compose pull` (the VPS, see .github/workflows/ci-cd.yml) instead pulls this
     # exact tag from GHCR - lowercase because GHCR requires an all-lowercase image path, unlike
     # this repo's actual (mixed-case) name.
-    image: ghcr.io/jpv-metromart/patientbooking.app:latest
+    image: ghcr.io/gramnaster/patientbooking.app:latest
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
-      - sqlserver
+      # service_healthy (not the default service_started) waits for the healthcheck above to pass
+      # before starting the api container - SQL Server accepts the TCP connection well before it's
+      # actually ready to serve queries, and Program.cs's admin-seed block queries the database
+      # eagerly at startup.
+      sqlserver:
+        condition: service_healthy
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      ConnectionStrings__HotelListingDbConnectionString: "Server=sqlserver,1433;Database=PatientBookingDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
+      ConnectionStrings__PatientBookingDbConnectionString: "Server=sqlserver,1433;Database=PatientBookingDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
       JwtSettings__Key: ${JWT_SETTINGS_KEY}
+      LookupProtection__Key: ${LOOKUP_PROTECTION_KEY}
+      EmailSettings__SmtpHost: ${EMAIL_SETTINGS_SMTP_HOST}
+      EmailSettings__SmtpPort: ${EMAIL_SETTINGS_SMTP_PORT}
       EmailSettings__Username: ${EMAIL_SETTINGS_USERNAME}
       EmailSettings__Password: ${EMAIL_SETTINGS_PASSWORD}
       Authentication__Google__ClientId: ${GOOGLE_CLIENT_ID}
+    volumes:
+      # Bind-mounted so Serilog's File sink (appsettings.Production.json) survives container
+      # recreation instead of being lost with the container's writable layer.
+      - ./Logs:/app/Logs
     ports:
       - "8080:8080"
       # No TLS in this container - UseHttpsRedirection()/UseHsts() in Program.cs expect a reverse
