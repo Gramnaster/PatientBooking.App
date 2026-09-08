@@ -58,6 +58,15 @@ services:
       # would let traffic bypass Traefik's TLS entirely. Domain/HTTPS are configured in Dokploy's
       # UI (Domains tab), not here.
       - "8080:8080"
+    networks:
+      # "default" keeps this on the same Compose network as sqlserver; dokploy-network is what
+      # lets Traefik actually reach this container to route api.industrialhinterlands.cloud to it.
+      - default
+      - dokploy-network
 
 volumes:
   sqlserver-data:
+
+networks:
+  dokploy-network:
+    external: true
