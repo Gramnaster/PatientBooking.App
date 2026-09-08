@@ -12,8 +12,7 @@ with automatic migrations on every API startup without a new user request.
 
 Use [the deployment runbook](../../docs/deployment.md) for executable project instructions.
 This note records decisions and troubleshooting evidence; keep the runbook as the single
-source for the full procedure. The [earlier guide handoff](../../docs/deployment-guide-handoff.md)
-is historical context, not proof of current source or VPS state.
+source for the full procedure.
 
 Inspect [Program.cs](../../PatientBooking.Api/Program.cs), [Dockerfile](../../Dockerfile),
 and [Compose](../../docker-compose.yml) before changing advice. Local source does not
