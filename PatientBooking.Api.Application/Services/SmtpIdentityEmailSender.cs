@@ -41,19 +41,29 @@ public sealed class SmtpIdentityEmailSender(
             $"""Please reset your password by <a href="{resetLink}">clicking here</a>"""
         );
 
-    public Task SendLoginNotificationAsync(
+    public async Task SendLoginNotificationAsync(
         ApplicationUser user,
         string ipAddress,
         DateTimeOffset occuredAtUtc,
         CancellationToken ct
-    ) =>
-        SendEmailAsync(
-            user.Email!,
-            "New sign-in to your account",
-            $"Your Patient Booking account was just signed into from IP {ipAddress} at {occuredAtUtc:u} UTC." +
-                "If this wasn't you, reset your password immediately and review your active sessions.",
-            ct
-        );
+    )
+    {
+        try
+        {
+            await SendEmailAsync(
+                user.Email!,
+                "New sign-in to your account",
+                $"Your Patient Booking account was just signed into from IP {ipAddress} at {occuredAtUtc:u} UTC." +
+                    "If this wasn't you, reset your password immediately and review your active sessions.",
+                ct
+            );
+        }
+        catch (Exception ex) when (ex is SocketException or SmtpCommandException or SmtpProtocolException or IOException)
+        {
+            // Runs after login already committed the refresh token - a failed notification must not fail the login.
+            logger.LoginNotificationSendFailed(ex, user.Email!);
+        }
+    }
 
     private async Task SendEmailAsync(string toEmail, string subject, string htmlBody, CancellationToken ct = default)
     {
@@ -65,29 +75,17 @@ public sealed class SmtpIdentityEmailSender(
         message.Subject = subject;
         message.Body = new TextPart(TextFormat.Html) { Text = htmlBody };
 
-        try
+        // SmtpClient here uses MimeKit
+        using var client = new SmtpClient();
+
+        await client.ConnectAsync(settings.SmtpHost, settings.SmtpPort, SecureSocketOptions.StartTlsWhenAvailable, ct);
+
+        if (!string.IsNullOrEmpty(settings.Username))
         {
-            // SmtpClient here uses MimeKit
-            using var client = new SmtpClient();
-
-            await client.ConnectAsync(
-                settings.SmtpHost,
-                settings.SmtpPort,
-                SecureSocketOptions.StartTlsWhenAvailable,
-                ct
-            );
-
-            if (!string.IsNullOrEmpty(settings.Username))
-            {
-                await client.AuthenticateAsync(settings.Username, settings.Password, ct);
-            }
-
-            await client.SendAsync(message, ct);
-            await client.DisconnectAsync(quit: true, ct);
+            await client.AuthenticateAsync(settings.Username, settings.Password, ct);
         }
-        catch (Exception ex) when (ex is SocketException or SmtpCommandException or SmtpProtocolException or IOException)
-        {
-            logger.ConfirmationEmailSendFailed(ex, toEmail);
-        }
+
+        await client.SendAsync(message, ct);
+        await client.DisconnectAsync(quit: true, ct);
     }
 }

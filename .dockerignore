@@ -1,0 +1,16 @@
+bin/
+obj/
+.vs/
+.git/
+.github/
+.vscode/
+.claude/
+.codex/
+.agents/
+.env
+.env.*
+!.env.example
+!docker/.env.dev.example
+Logs/
+*.user
+**/keys/

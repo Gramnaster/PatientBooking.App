@@ -19,6 +19,7 @@ using PatientBooking.Api.Common.Models.Config;
 using PatientBooking.Api.Domain;
 using PatientBooking.Api.Domain.Security;
 using PatientBooking.Api.Filters;
+using PatientBooking.Api.Handlers;
 using Scalar.AspNetCore;
 using Serilog;
 using Serilog.Enrichers.Span;
@@ -205,6 +206,9 @@ try
             options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(3);
         });
 
+    builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+    builder.Services.AddProblemDetails();
+
     builder
         .Services
         .AddControllers(options => options.Filters.Add<ValidationFilter>())
@@ -252,6 +256,9 @@ try
             }
         }
     }
+
+    // First in the pipeline so it wraps every downstream middleware and endpoint
+    app.UseExceptionHandler();
 
     // Identity's built-in endpoints need different prefix or the two will collide
     app.MapGroup("api/defaultauth").MapIdentityApi<ApplicationUser>();
