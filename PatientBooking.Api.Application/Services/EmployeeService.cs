@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using PatientBooking.Api.Application.Contracts;
 using PatientBooking.Api.Application.DTOs.Employee;
+using PatientBooking.Api.Application.Mappers;
 using PatientBooking.Api.Common.Enums;
 using PatientBooking.Api.Common.Results;
 using PatientBooking.Api.Domain;
@@ -13,9 +15,41 @@ namespace PatientBooking.Api.Application.Services;
 
 public sealed class EmployeeService(
     UserManager<ApplicationUser> userManager,
-    PatientBookingDbContext patientBookingDbContext
+    PatientBookingDbContext patientBookingDbContext,
+    TimeProvider clock
 ) : IEmployeeService
 {
+    public async Task<Result<IReadOnlyList<GetEmployeeDto>>> GetEmployeesAsync(CancellationToken ct)
+    {
+        List<GetEmployeeDto> employees = await patientBookingDbContext
+            .Employees
+            .AsNoTracking()
+            .Where(e => e.DeletedAtUtc == null)
+            .ProjectToGetEmployeeDto()
+            .ToListAsync(ct);
+
+        return Result<IReadOnlyList<GetEmployeeDto>>.Success(employees);
+    }
+
+    public async Task<Result<GetEmployeeDto>> GetEmployeeAsync(int id, CancellationToken ct)
+    {
+        GetEmployeeDto? employee = await patientBookingDbContext
+            .Employees
+            .AsNoTracking()
+            .Where(e => e.Id == id && e.DeletedAtUtc == null)
+            .ProjectToGetEmployeeDto()
+            .FirstOrDefaultAsync(ct);
+
+        if (employee is null)
+        {
+            return Result<GetEmployeeDto>.NotFound(
+                string.Create(CultureInfo.InvariantCulture, $"Employee {id} not found.")
+            );
+        }
+
+        return Result<GetEmployeeDto>.Success(employee);
+    }
+
     public async Task<Result<GetEmployeeDto>> CreateEmployeeAsync(CreateEmployeeDto createDto, CancellationToken ct)
     {
         bool clinicExists = await patientBookingDbContext.Clinics.AnyAsync(
@@ -85,5 +119,53 @@ public sealed class EmployeeService(
         };
 
         return Result<GetEmployeeDto>.Success(getEmployeeDto);
+    }
+
+    public async Task<Result> UpdateEmployeeAsync(int id, UpdateEmployeeDto updateDto, CancellationToken ct)
+    {
+        Employee? employee = await patientBookingDbContext.Employees.FirstOrDefaultAsync(
+            e => e.Id == id && e.DeletedAtUtc == null,
+            ct
+        );
+
+        if (employee is null)
+        {
+            return Result.NotFound(string.Create(CultureInfo.InvariantCulture, $"Employee {id} not found."));
+        }
+
+        bool clinicExists = await patientBookingDbContext.Clinics.AnyAsync(
+            c => c.Id == updateDto.ClinicId && c.DeletedAtUtc == null,
+            ct
+        );
+
+        if (!clinicExists)
+        {
+            return Result.NotFound("Clinic not found.");
+        }
+
+        employee.ClinicId = updateDto.ClinicId;
+        employee.UpdatedAtUtc = clock.GetUtcNow();
+
+        await patientBookingDbContext.SaveChangesAsync(ct);
+
+        return Result.Success();
+    }
+
+    public async Task<Result> DeleteEmployeeAsync(int id, CancellationToken ct)
+    {
+        Employee? employee = await patientBookingDbContext.Employees.FirstOrDefaultAsync(
+            e => e.Id == id && e.DeletedAtUtc == null,
+            ct
+        );
+
+        if (employee is null)
+        {
+            return Result.NotFound(string.Create(CultureInfo.InvariantCulture, $"Employee {id} not found."));
+        }
+
+        employee.DeletedAtUtc = clock.GetUtcNow();
+        await patientBookingDbContext.SaveChangesAsync(ct);
+
+        return Result.Success();
     }
 }
