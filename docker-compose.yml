@@ -1,6 +1,7 @@
 # VPS deploy shape - a single Docker host running both containers, no orchestrator, no Azure
-# dependency. `docker compose up -d` after pulling ghcr.io's built image (see
-# .github/workflows/ci-cd.yml) is the whole deploy.
+# dependency. Deployed via Dokploy (docs.dokploy.com) as a Docker Compose application - Dokploy
+# builds the Dockerfile directly from this repo and manages the deploy. `docker compose up --build`
+# still works unmodified for local dev.
 services:
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
@@ -24,11 +25,7 @@ services:
       start_period: 20s
 
   api:
-    # image + build together: `docker compose up --build` (local dev) builds and tags this image
-    # locally; `docker compose pull` (the VPS, see .github/workflows/ci-cd.yml) instead pulls this
-    # exact tag from GHCR - lowercase because GHCR requires an all-lowercase image path, unlike
-    # this repo's actual (mixed-case) name.
-    image: ghcr.io/gramnaster/patientbooking.app:latest
+    # Dokploy builds this from the Dockerfile directly on deploy - no image to pull.
     build:
       context: .
       dockerfile: Dockerfile
@@ -55,11 +52,12 @@ services:
       # recreation instead of being lost with the container's writable layer.
       - ./Logs:/app/Logs
     ports:
+      # Dokploy's Traefik reaches this over its internal Docker network by service name (api:8080),
+      # not through this mapping - it's here for local dev (`curl localhost:8080`). Safe in
+      # production only as long as the VPS firewall doesn't allow inbound 8080; opening that port
+      # would let traffic bypass Traefik's TLS entirely. Domain/HTTPS are configured in Dokploy's
+      # UI (Domains tab), not here.
       - "8080:8080"
-      # No TLS in this container - UseHttpsRedirection()/UseHsts() in Program.cs expect a reverse
-      # proxy (Caddy is the simplest option - automatic Let's Encrypt certs in a few lines of
-      # Caddyfile; Nginx+certbot is the other common choice) terminating HTTPS in front of this
-      # port. Not included here - add one before exposing this port past your VPS's firewall.
 
 volumes:
   sqlserver-data:
