@@ -66,7 +66,8 @@ services:
 
   # Runs migrations on demand from a terminal - never starts on a normal `docker compose up`
   # (that's what the "tools" profile excludes it from). Trigger manually, from the VPS:
-  # docker compose -p patientbooking-api-qns9o0 --env-file .env -f ./docker-compose.yml run --rm migrator
+  # Use the same Compose project name and .env as the running Dokploy deployment.
+  # docker compose -p patientbooking-api-qns9o0 --env-file .env -f ./docker-compose.yml run --build --rm migrator
   migrator:
     build:
       context: .
@@ -77,9 +78,12 @@ services:
       sqlserver:
         condition: service_healthy
     environment:
-      # Program.cs validates this eagerly before EF tooling builds the host - the --connection
-      # flag below never gets a chance to matter without this being set too.
+      # EF tooling builds the application host and resolves the DbContext, so it needs the
+      # same connection string, JWT key, and lookup-protection key as the API.
+      ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__PatientBookingDbConnectionString: "Server=sqlserver,1433;Database=PatientBookingDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
+      JwtSettings__Key: ${JWT_SETTINGS_KEY}
+      LookupProtection__Key: ${LOOKUP_PROTECTION_KEY}
     working_dir: /src
     entrypoint:
       - dotnet
