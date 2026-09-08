@@ -25,6 +25,7 @@ using PatientBooking.Api.Domain;
 using PatientBooking.Api.Domain.Security;
 using PatientBooking.Api.Filters;
 using PatientBooking.Api.Handlers;
+using PatientBooking.Api.OpenApi;
 using Scalar.AspNetCore;
 using Serilog;
 using Serilog.Enrichers.Span;
@@ -279,7 +280,11 @@ try
         .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
     // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-    builder.Services.AddOpenApi();
+    builder.Services.AddOpenApi(options =>
+    {
+        options.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
+        options.AddOperationTransformer<BearerSecurityRequirementOperationTransformer>();
+    });
 
     var app = builder.Build();
 
