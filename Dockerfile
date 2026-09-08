@@ -12,6 +12,12 @@ COPY PatientBooking.Api.Application/PatientBooking.Api.Application.csproj Patien
 COPY PatientBooking.Api/PatientBooking.Api.csproj PatientBooking.Api/
 RUN dotnet restore PatientBooking.Api/PatientBooking.Api.csproj
 
+# dotnet-ef only used by the migrator service (docker-compose.yml, "tools" profile) - installed
+# here so the build stage can run migrations on demand without shipping the SDK/tool in the
+# runtime image below, which never sees this layer.
+RUN dotnet tool install --global dotnet-ef
+ENV PATH="$PATH:/root/.dotnet/tools"
+
 COPY . .
 RUN dotnet publish PatientBooking.Api/PatientBooking.Api.csproj -c Release -o /app/publish --no-restore
 

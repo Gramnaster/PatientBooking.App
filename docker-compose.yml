@@ -64,6 +64,31 @@ services:
       - default
       - dokploy-network
 
+  # Runs migrations on demand from a terminal - never starts on a normal `docker compose up`
+  # (that's what the "tools" profile excludes it from). Trigger manually, from the VPS:
+  # docker compose -p patientbooking-api-qns9o0 --env-file .env -f ./docker-compose.yml run --rm migrator
+  migrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+    profiles: ["tools"]
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    working_dir: /src
+    entrypoint:
+      - dotnet
+      - ef
+      - database
+      - update
+      - --project
+      - PatientBooking.Api.Domain
+      - --startup-project
+      - PatientBooking.Api
+      - --connection
+      - "Server=sqlserver,1433;Database=PatientBookingDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
+
 volumes:
   sqlserver-data:
 
