@@ -76,6 +76,10 @@ services:
     depends_on:
       sqlserver:
         condition: service_healthy
+    environment:
+      # Program.cs validates this eagerly before EF tooling builds the host - the --connection
+      # flag below never gets a chance to matter without this being set too.
+      ConnectionStrings__PatientBookingDbConnectionString: "Server=sqlserver,1433;Database=PatientBookingDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
     working_dir: /src
     entrypoint:
       - dotnet
