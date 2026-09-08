@@ -1,11 +1,15 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -213,6 +217,62 @@ try
     builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
     builder.Services.AddProblemDetails();
 
+    // Partitioned by client IP - must stay after UseForwardedHeaders so RemoteIpAddress is real, not Traefik's.
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(
+            httpContext => RateLimitPartition.GetFixedWindowLimiter(
+                partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                factory: _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 100,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                    QueueLimit = 10, // a few excess requests wait for the next window instead of an instant 429
+                }
+            )
+        );
+
+        options.OnRejected = async (context, cancellationToken) =>
+        {
+            var clientIp = context.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            Log.Warning(
+                "Rate limit exceeded for {ClientIp} on {RequestPath}.",
+                clientIp,
+                context.HttpContext.Request.Path.Value
+            );
+
+            context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+
+            var problemDetails = new ProblemDetails
+            {
+                Status = StatusCodes.Status429TooManyRequests,
+                Title = "Too many requests",
+                Detail = "Rate limit exceeded. Try again shortly.",
+            };
+
+            // Token bucket/concurrency limiters don't expose this metadata, only fixed/sliding-window ones.
+            if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+            {
+                var retryAfterSeconds = (int)retryAfter.TotalSeconds;
+                context.HttpContext.Response.Headers.RetryAfter = retryAfterSeconds.ToString(
+                    CultureInfo.InvariantCulture
+                );
+                problemDetails.Extensions["retryAfterSeconds"] = retryAfterSeconds;
+            }
+
+            var problemDetailsService = context
+                .HttpContext
+                .RequestServices
+                .GetRequiredService<IProblemDetailsService>();
+            await problemDetailsService.TryWriteAsync(new ProblemDetailsContext
+            {
+                HttpContext = context.HttpContext,
+                ProblemDetails = problemDetails
+            });
+        };
+    });
+
     builder
         .Services
         .AddControllers(options => options.Filters.Add<ValidationFilter>())
@@ -281,11 +341,9 @@ try
     app.MapGroup("api/defaultauth").MapIdentityApi<ApplicationUser>();
 
     // Configure the HTTP request pipeline.
-    if (app.Environment.IsDevelopment())
-    {
-        app.MapOpenApi();
-        app.MapScalarApiReference();
-    }
+    // Public in every environment, not just Development - solo project, doubles as API docs.
+    app.MapOpenApi();
+    app.MapScalarApiReference();
 
     // Trusts Traefik's forwarded scheme so email links use https:// not http:// - safe since ufw blocks external access to Kestrel's port.
     var forwardedHeadersOptions = new ForwardedHeadersOptions
@@ -295,6 +353,8 @@ try
     forwardedHeadersOptions.KnownIPNetworks.Clear();
     forwardedHeadersOptions.KnownProxies.Clear();
     app.UseForwardedHeaders(forwardedHeadersOptions);
+
+    app.UseRateLimiter();
 
     app.UseHttpsRedirection();
 
