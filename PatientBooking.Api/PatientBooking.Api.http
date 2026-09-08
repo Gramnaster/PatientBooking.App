@@ -1,14 +1,11 @@
 @PatientBooking.Api_HostAddress = https://localhost:7195
 @json = application/json
-@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJQYXRpZW50Qm9va2luZ0FwaUNsaWVudCIsImlzcyI6IlBhdGllbnRCb29raW5nQXBpIiwiZXhwIjoxNzg4NzcwNDgxLCJzdWIiOiJkNGNkZjAwZC03NmI2LTQzMjAtODkxMi0zZmJjYjU2ZjdiODAiLCJlbWFpbCI6ImFkbWluMUBlbWFpbC5jb20iLCJqdGkiOiJjMDVmMzRkOC05NjExLTRkZGYtYTgzMi03NWJiZGNjYWEzZDMiLCJuYW1lIjoiSm9obiBMYXN0IiwiaHR0cDovL3NjaGVtYXMubWljcm9zb2Z0LmNvbS93cy8yMDA4LzA2L2lkZW50aXR5L2NsYWltcy9yb2xlIjoiQWRtaW4iLCJpYXQiOjE3ODg3Njk1ODEsIm5iZiI6MTc4ODc2OTU4MX0.ae_iHx11kNlj3Czk8DHwPQz3nAs-ahLJW18Zrc6HiRk
-# @accessToken = {{login.response.body.$.token}}
 
-# @pendingToken = {{login.response.body.$.pendingToken}}
+### 0 ADMIN SETUP (one-time, run before sections 4-6)
 
-###
-
+# @name adminRegister
 POST {{PatientBooking.Api_HostAddress}}/api/auth/register
-Content-Type: application/json
+Content-Type: {{json}}
 
 {
   "Email": "admin1@email.com",
@@ -18,111 +15,258 @@ Content-Type: application/json
 }
 
 ###
-# @name login
+# userId below comes straight from the register response. token comes from the
+# confirmation email (or Logs/log-.txt if no SMTP is configured locally).
+@adminUserId = {{adminRegister.response.body.$.Id}}
+@adminConfirmToken = REPLACE_WITH_EMAIL_TOKEN
+GET {{PatientBooking.Api_HostAddress}}/api/auth/confirm-email?userId={{adminUserId}}&token={{adminConfirmToken}}
+
+###
+# Run this only after the user-secret + restart above.
+# @name adminLogin
 POST {{PatientBooking.Api_HostAddress}}/api/auth/login
-Content-Type: application/json
+Content-Type: {{json}}
 
 {
   "Email": "admin1@email.com",
   "Password": "Password!!!123"
 }
 
+@adminToken = {{adminLogin.response.body.$.token}}
+
+### 1 PATIENT — register, confirm, login, 2FA (optional)
+
+# @name patientRegister
+POST {{PatientBooking.Api_HostAddress}}/api/auth/register
+Content-Type: {{json}}
+
+{
+  "Email": "patient1@email.com",
+  "Password": "Password!!!123",
+  "FirstName": "Jane",
+  "LastName": "Doe"
+}
 
 ###
 
-@userId=string
-GET {{PatientBooking.Api_HostAddress}}/api/auth/confirm-email?userId={{userId}}&token={{token}}
-Content-Type: application/json
-{
-  "Email": "admin1@email.com"
-}
+@patientUserId = {{patientRegister.response.body.$.Id}}
+@patientConfirmToken = REPLACE_WITH_EMAIL_TOKEN
+GET {{PatientBooking.Api_HostAddress}}/api/auth/confirm-email?userId={{patientUserId}}&token={{patientConfirmToken}}
 
 ###
 
 POST {{PatientBooking.Api_HostAddress}}/api/auth/resend-confirmation
-Content-Type: application/json
+Content-Type: {{json}}
 
 {
-  "Email": "user5@email.com"
+  "Email": "patient1@email.com"
 }
+
+###
+# @name patientLogin
+POST {{PatientBooking.Api_HostAddress}}/api/auth/login
+Content-Type: {{json}}
+
+{
+  "Email": "patient1@email.com",
+  "Password": "Password!!!123"
+}
+
+@patientToken = {{patientLogin.response.body.$.token}}
+@patientPendingToken = {{patientLogin.response.body.$.pendingToken}}
+
+###
+# Optional branch below — skip straight to section 2 if not demoing 2FA.
+# Returns sharedKey + authenticatorUri to seed an authenticator app with.
+GET {{PatientBooking.Api_HostAddress}}/api/auth/2fa/setup
+Authorization: Bearer {{patientToken}}
 
 ###
 
 POST {{PatientBooking.Api_HostAddress}}/api/auth/2fa/enable
-Authorization: Bearer {{accessToken}}
-Content-Type: application/json
+Authorization: Bearer {{patientToken}}
+Content-Type: {{json}}
 
 {
-  "Code": "870754"
+  "Code": "REPLACE_WITH_TOTP_CODE"
 }
 
 ###
-# @name setup
-GET {{PatientBooking.Api_HostAddress}}/api/auth/2fa/setup
-Authorization: Bearer {{accessToken}}
-
-{
-  "sharedKey": "B3XOEXDDHFK2ZPNK3WZ54DGRIIOA2KVQ",
-  "authenticatorUri": "otpauth://totp/PatientBookingApi:user5%40email.com?secret=B3XOEXDDHFK2ZPNK3WZ54DGRIIOA2KVQ&issuer=PatientBookingApi&digits=6"
-}
-
-###
-
+# Once 2FA is enabled, patientLogin above returns RequiresTwoFactor + pendingToken
+# instead of a token. Exchange pendingToken + a fresh TOTP code for the real one here.
 POST {{PatientBooking.Api_HostAddress}}/api/auth/2fa/login
-Authorization: Bearer {{pendingToken}}
-Content-Type: application/json
+Authorization: Bearer {{patientPendingToken}}
+Content-Type: {{json}}
 
 {
-  "Code": "107215"
+  "Code": "REPLACE_WITH_TOTP_CODE"
 }
 
-###
+### 2 BOOKING — browse clinics, then Patient CRUD
 
 GET {{PatientBooking.Api_HostAddress}}/api/clinic
 
 ###
 
-@id=1
-GET {{PatientBooking.Api_HostAddress}}/api/clinic/{{id}}
+@existingClinicId = 1
+GET {{PatientBooking.Api_HostAddress}}/api/clinic/{{existingClinicId}}
+
+###
+# GetBookingDto deliberately never exposes the internal booking Id (BookingNumber
+# is the public identifier) - grab the id below from the list response.
+POST {{PatientBooking.Api_HostAddress}}/api/booking
+Authorization: Bearer {{patientToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: {{json}}
+
+{
+  "ClinicId": 1,
+  "AppointmentStartUtc": "2026-09-15T09:00:00Z"
+}
 
 ###
 
+GET {{PatientBooking.Api_HostAddress}}/api/booking
+Authorization: Bearer {{patientToken}}
+
+###
+
+@bookingId = 1
+GET {{PatientBooking.Api_HostAddress}}/api/booking/{{bookingId}}
+Authorization: Bearer {{patientToken}}
+
+###
+
+DELETE {{PatientBooking.Api_HostAddress}}/api/booking/{{bookingId}}
+Authorization: Bearer {{patientToken}}
+
+### 3 EMPLOYEE — Admin provisions, employee logs in directly
+
+# @name createEmployee
+POST {{PatientBooking.Api_HostAddress}}/api/employees
+Authorization: Bearer {{adminToken}}
+Content-Type: {{json}}
+
+{
+  "Email": "employee1@email.com",
+  "Password": "Password!!!123",
+  "FirstName": "Sam",
+  "LastName": "Staff",
+  "ClinicId": 1
+}
+
+@employeeId = {{createEmployee.response.body.$.Id}}
+
+###
+# @name employeeLogin
+POST {{PatientBooking.Api_HostAddress}}/api/auth/login
+Content-Type: {{json}}
+
+{
+  "Email": "employee1@email.com",
+  "Password": "Password!!!123"
+}
+
+@employeeToken = {{employeeLogin.response.body.$.token}}
+
+###
+
+GET {{PatientBooking.Api_HostAddress}}/api/employees
+Authorization: Bearer {{adminToken}}
+
+###
+
+GET {{PatientBooking.Api_HostAddress}}/api/employees/{{employeeId}}
+Authorization: Bearer {{adminToken}}
+
+###
+
+PUT {{PatientBooking.Api_HostAddress}}/api/employees/{{employeeId}}
+Authorization: Bearer {{adminToken}}
+Content-Type: {{json}}
+
+{
+  "ClinicId": 1
+}
+
+###
+
+DELETE {{PatientBooking.Api_HostAddress}}/api/employees/{{employeeId}}
+Authorization: Bearer {{adminToken}}
+
+### 4 CLINIC — full Admin CRUD, including operating hours
+
+# @name createClinic
 POST {{PatientBooking.Api_HostAddress}}/api/clinic
-Authorization: Bearer {{token}}
-Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+Content-Type: {{json}}
 
 {
   "Name": "Clinic06",
   "Address": "789 Address Street"
 }
 
+@newClinicId = {{createClinic.response.body.$.Id}}
+
 ###
-PUT {{PatientBooking.Api_HostAddress}}/api/clinic/{{id}}
-Authorization: Bearer {{token}}
-Content-Type: application/json
+
+PUT {{PatientBooking.Api_HostAddress}}/api/clinic/{{newClinicId}}
+Authorization: Bearer {{adminToken}}
+Content-Type: {{json}}
 
 {
-  //UpdateClinicDto
+  "Name": "Clinic06",
+  "Address": "790 Address Street"
 }
 
 ###
-# @id=1
-GET {{PatientBooking.Api_HostAddress}}/api/clinic/{{id}}/operating-hours
+
+GET {{PatientBooking.Api_HostAddress}}/api/clinic/{{newClinicId}}/operating-hours
 
 ###
-@id=1004
-PUT {{PatientBooking.Api_HostAddress}}/api/clinic/{{id}}/operating-hours
-Authorization: Bearer {{token}}
-Content-Type: application/json
 
- [
-    { "DayOfWeek": "Sunday", "OpenTime": null, "CloseTime": null },
-    { "DayOfWeek": "Monday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
-    { "DayOfWeek": "Tuesday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
-    { "DayOfWeek": "Wednesday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
-    { "DayOfWeek": "Thursday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
-    { "DayOfWeek": "Friday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
-    { "DayOfWeek": "Saturday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" }
-  ]
+PUT {{PatientBooking.Api_HostAddress}}/api/clinic/{{newClinicId}}/operating-hours
+Authorization: Bearer {{adminToken}}
+Content-Type: {{json}}
+
+[
+  { "DayOfWeek": "Sunday", "OpenTime": null, "CloseTime": null },
+  { "DayOfWeek": "Monday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
+  { "DayOfWeek": "Tuesday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
+  { "DayOfWeek": "Wednesday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
+  { "DayOfWeek": "Thursday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
+  { "DayOfWeek": "Friday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" },
+  { "DayOfWeek": "Saturday", "OpenTime": "09:00:00", "CloseTime": "17:00:00" }
+]
 
 ###
+
+DELETE {{PatientBooking.Api_HostAddress}}/api/clinic/{{newClinicId}}
+Authorization: Bearer {{adminToken}}
+
+### 5 STAFF BOOKING — Employee books on a patient's behalf
+
+GET {{PatientBooking.Api_HostAddress}}/api/clinic/{{existingClinicId}}/booking
+Authorization: Bearer {{employeeToken}}
+
+###
+
+POST {{PatientBooking.Api_HostAddress}}/api/clinic/{{existingClinicId}}/booking
+Authorization: Bearer {{employeeToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: {{json}}
+
+{
+  "PatientId": 1,
+  "AppointmentStartUtc": "2026-09-16T10:00:00Z"
+}
+
+###
+
+GET {{PatientBooking.Api_HostAddress}}/api/clinic/{{existingClinicId}}/booking/{{bookingId}}
+Authorization: Bearer {{employeeToken}}
+
+###
+
+DELETE {{PatientBooking.Api_HostAddress}}/api/clinic/{{existingClinicId}}/booking/{{bookingId}}
+Authorization: Bearer {{employeeToken}}
