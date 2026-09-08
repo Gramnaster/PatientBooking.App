@@ -24,21 +24,21 @@ public sealed class SmtpIdentityEmailSender(
         SendEmailAsync(
             email,
             "Confirm your email",
-            $"Please confirm your Patient Booking account by <a href='{confirmationLink}'>clicking here</a>"
+            $"""Please confirm your Patient Booking account by <a href="{confirmationLink}">clicking here</a>"""
         );
 
     public Task SendPasswordResetCodeAsync(ApplicationUser user, string email, string resetCode) =>
         SendEmailAsync(
             email,
             "Reset your password",
-            $"Please reset your password by <a href='{resetCode}'>clicking here</a>"
+            $"""Please reset your password by <a href="{resetCode}">clicking here</a>"""
         );
 
     public Task SendPasswordResetLinkAsync(ApplicationUser user, string email, string resetLink) =>
         SendEmailAsync(
             email,
             "Reset your password",
-            $"Please reset your password by <a href='{resetLink}'>clicking here</a>"
+            $"""Please reset your password by <a href="{resetLink}">clicking here</a>"""
         );
 
     public Task SendLoginNotificationAsync(
