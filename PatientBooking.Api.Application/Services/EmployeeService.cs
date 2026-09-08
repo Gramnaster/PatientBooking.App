@@ -111,11 +111,11 @@ public sealed class EmployeeService(
         GetEmployeeDto getEmployeeDto = new()
         {
             Id = employee.Id,
-            Email = user.Email!,
+            Email = user.Email,
             FirstName = user.FirstName,
             LastName = user.LastName,
             EmployeeNumber = employee.EmployeeNumber,
-            ClinicId = employee.ClinicId!.Value,
+            ClinicId = employee.ClinicId.Value,
         };
 
         return Result<GetEmployeeDto>.Success(getEmployeeDto);
