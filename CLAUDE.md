@@ -178,6 +178,11 @@ aggregates or domain events beyond what a given rule actually needs.
 
 ## Tech Stack (as configured)
 
+For deployment, Docker/Dokploy troubleshooting, or deployed database migrations, read
+[ASP.NET Core deployment knowledge](.claude/knowledge/aspnet-dokploy-deployment.md)
+and the [deployment runbook](docs/deployment.md). Preserve the documented manual migration
+workflow and distinguish verified local configuration from remote deployment assumptions.
+
 | Concern | Choice | Notes |
 |---|---|---|
 | Database | SQL Server via EF Core | `Microsoft.EntityFrameworkCore.SqlServer`, `Microsoft.Data.SqlClient` |

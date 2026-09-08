@@ -2,6 +2,8 @@
 
 ## Tooling
 
+- Keep shared project instructions and knowledge routing in `CLAUDE.md`; `AGENTS.md` is a discovery pointer to it, not a duplicate policy document.
+
 - For Codex lifecycle hooks on native Windows, use a `commandWindows` PowerShell override; the existing Bash command resolves to WSL and fails with `Bash/Service/CreateInstance/E_ACCESSDENIED` in this environment.
 - `PreToolUse` with matcher `Bash` runs before normal console commands. Do not conclude hooks are disabled merely because an agent command runner fails before the hook process starts.
 - After changing a project-local hook definition, open `/hooks` in a fresh Codex session and trust the new hash before testing it. Test guard behavior with a fixture payload; never issue the destructive command being guarded.
