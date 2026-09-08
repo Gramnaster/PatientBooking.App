@@ -234,9 +234,17 @@ try
 
                 if (!isAlreadyAdmin)
                 {
-                    db.Admins.Add(new Admin { UserId = user.Id, AdminNumber = "Admin-001", });
+                    Admin admin = new() { UserId = user.Id };
+                    db.Admins.Add(admin);
 
+                    await using var transaction = await db.Database.BeginTransactionAsync(CancellationToken.None);
                     await db.SaveChangesAsync(CancellationToken.None);
+
+                    admin.AdminNumber = IdentifierCodeEncoder.Encode(admin.Id, IdentifierCodeEncoder.AdminNumberShape);
+                    await db.SaveChangesAsync(CancellationToken.None);
+
+                    await transaction.CommitAsync(CancellationToken.None);
+
                     Log.Information("Seeded Admin for userId {UserId}", user.Id);
                 }
             }

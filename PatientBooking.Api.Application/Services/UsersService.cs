@@ -13,6 +13,7 @@ using PatientBooking.Api.Common.Enums;
 using PatientBooking.Api.Common.Models.Config;
 using PatientBooking.Api.Common.Results;
 using PatientBooking.Api.Domain;
+using System.Globalization;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -34,8 +35,10 @@ public class UsersService(
 ) : IUsersService
 #pragma warning restore S107
 {
-    private const string _invalidCredentials = "Invalid Credentials";
-    private const string _invalidRefreshTokens = "Invalid or expired refresh tokens";
+    private const string _userNotFound = "User not found.";
+    private const string _invalidCredentials = "Invalid Credentials.";
+    private const string _invalidRefreshTokens = "Invalid or expired refresh tokens.";
+    private const int MaxCodeAllocationAttempts = 3;
 
     // 2FA Properties
     private const int PendingTokenMinutes = 5;
@@ -71,12 +74,29 @@ public class UsersService(
             return Result<RegisteredUserDto>.BadRequest(registrationErrors);
         }
 
-        Patient patient = new() { UserId = user.Id, };
+        // MRN needs patient.Id, which doesn't exist until this save assigns it
+        // so Patient row is saved once without it. Fail = user created with no Patient profile
+        Patient patient = new()
+        {
+            UserId = user.Id,
+        };
 
         patientBookingDbContext.Patients.Add(patient);
-        await patientBookingDbContext.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
 
+        try
+        {
+            await patientBookingDbContext.SaveChangesAsync(ct);
+
+            patient.MedicalRecordNumber = IdentifierCodeEncoder.Encode(patient.Id, IdentifierCodeEncoder.MedicalRecordNumberShape);
+            await patientBookingDbContext.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            await userManager.DeleteAsync(user);
+            return Result<RegisteredUserDto>.Conflict("Could not create a patient profile. Please try again.");
+        }
+
+        // Inform the user by email their registration is confirmed
         await SendConfirmationEmailAsync(user);
 
         // User now has an ID at this point, which we can use to finalise the creation
@@ -86,9 +106,25 @@ public class UsersService(
             FirstName = user.FirstName,
             LastName = user.LastName,
             Id = user.Id,
+            MedicalRecordNumber = patient.MedicalRecordNumber,
         };
 
         return Result<RegisteredUserDto>.Success(registeredUserDto);
+    }
+
+    private async Task<string> AllocateMedicalRecordNumberAsync(CancellationToken ct)
+    {
+        string? lastMrn = await patientBookingDbContext.Patients
+            .Where(p => p.MedicalRecordNumber != null)
+            .OrderByDescending(p => p.MedicalRecordNumber)
+            .Select(p => p.MedicalRecordNumber)
+            .FirstOrDefaultAsync(ct);
+
+        int sequence = lastMrn is null
+            ? 1
+            : int.Parse(lastMrn.AsSpan("MRN-".Length), NumberStyles.None, CultureInfo.InvariantCulture) + 1;
+
+        return string.Create(CultureInfo.InvariantCulture, $"MRN-{sequence:D6}");
     }
 
     public async Task<Result> ConfirmEmailAsync(string userId, string token)
@@ -96,7 +132,7 @@ public class UsersService(
         var user = await userManager.FindByIdAsync(userId);
         if (user is null)
         {
-            return Result.NotFound("User not found");
+            return Result.NotFound(_userNotFound);
         }
 
         string decodedToken;
@@ -277,7 +313,7 @@ public class UsersService(
         var user = await userManager.FindByIdAsync(resetPasswordDto.UserId);
         if (user is null)
         {
-            return Result.NotFound("User not found");
+            return Result.NotFound(_userNotFound);
         }
 
         string decodedToken;
@@ -498,7 +534,7 @@ public class UsersService(
         var user = await userManager.FindByIdAsync(UserId);
         if (user is null)
         {
-            return Result<TwoFactorSetupDto>.NotFound("User not found");
+            return Result<TwoFactorSetupDto>.NotFound(_userNotFound);
         }
 
         var unformattedKey = await userManager.GetAuthenticatorKeyAsync(user);
@@ -527,7 +563,7 @@ public class UsersService(
         var user = await userManager.FindByIdAsync(UserId);
         if (user is null)
         {
-            return Result<TwoFactorEnabledDto>.NotFound("User not found");
+            return Result<TwoFactorEnabledDto>.NotFound(_userNotFound);
         }
 
         var isCodeValid = await userManager.VerifyTwoFactorTokenAsync(
@@ -557,7 +593,7 @@ public class UsersService(
         var user = await userManager.FindByIdAsync(UserId);
         if (user is null)
         {
-            return Result.NotFound("User not found");
+            return Result.NotFound(_userNotFound);
         }
 
         await userManager.SetTwoFactorEnabledAsync(user, enabled: false);
@@ -770,7 +806,7 @@ public class UsersService(
     {
         var user = await userManager.FindByIdAsync(UserId);
         if (user is null)
-            return Result.NotFound("User not found.");
+            return Result.NotFound(_userNotFound);
 
         var passwordError = await ConfirmPasswordIfRequiredAsync(user, password);
         if (passwordError is not null)
@@ -809,7 +845,7 @@ public class UsersService(
         var user = await userManager.FindByIdAsync(UserId);
         if (user is null)
         {
-            return Result.NotFound("User not found.");
+            return Result.NotFound(_userNotFound);
         }
 
         var passwordError = await ConfirmPasswordIfRequiredAsync(user, password);
@@ -835,7 +871,7 @@ public class UsersService(
         var user = await userManager.FindByIdAsync(userId);
         if (user is null)
         {
-            return Result.NotFound("User not found.");
+            return Result.NotFound(_userNotFound);
         }
 
         var lastAdminError = await BlockIfLastAdminAsync(user);
@@ -858,7 +894,7 @@ public class UsersService(
         var user = await userManager.FindByIdAsync(userId);
         if (user is null)
         {
-            return Result.NotFound("User not found.");
+            return Result.NotFound(_userNotFound);
         }
 
         var lastAdminError = await BlockIfLastAdminAsync(user);
