@@ -37,6 +37,16 @@ prove which image or configuration is currently deployed.
 
 ## Execution locations and deployment stages
 
+Admin bootstrap now creates one new account from `ADMIN_SEED_EMAIL`,
+`ADMIN_SEED_PASSWORD`, `ADMIN_SEED_FIRST_NAME`, and `ADMIN_SEED_LAST_NAME` supplied
+through Dokploy's Environment editor and mapped explicitly by Compose. It no longer
+promotes a publicly registered account by email. See the runbook's initial-admin section.
+Creation is transactional (Identity user, patient/MRN, admin/number); the email is marked
+confirmed by operator provisioning. Existing non-admin email collisions or other admins
+stop startup. The same existing admin is left unchanged, including its password.
+Remove the bootstrap password after provisioning; retain the email for startup checks.
+Migration mode still skips bootstrap and normal startup still does not apply migrations.
+
 | Location | Responsibility |
 |---|---|
 | Local repository terminal | Author migrations, build, review and commit changes. |
