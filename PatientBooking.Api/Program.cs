@@ -19,8 +19,10 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using PatientBooking.Api.Application.Contracts;
+using PatientBooking.Api.Application.Messaging;
 using PatientBooking.Api.Application.Services;
 using PatientBooking.Api.Application.Validators.Clinic;
+using PatientBooking.Api.BackgroundServices;
 using PatientBooking.Api.Common.Models.Config;
 using PatientBooking.Api.Domain;
 using PatientBooking.Api.Domain.Security;
@@ -170,7 +172,9 @@ try
                             context.HttpContext.RequestAborted
                         )
                     )
+                    {
                         context.Fail("Account is unavailable.");
+                    }
                 },
             };
         });
@@ -201,6 +205,14 @@ try
 
     // FluentValidation - One call registers every IValidator<T> in App assembly
     builder.Services.AddValidatorsFromAssemblyContaining<CreateClinicDtoValidator>();
+
+    // RabbitMQ
+    builder.Services.Configure<RabbitMqSettings>(builder.Configuration.GetSection("RabbitMq"));
+
+    builder.Services.AddSingleton<RabbitMqConnectionProvider>();
+    builder.Services.AddSingleton<IBookingEventPublisher, RabbitMqBookingEventPublisher>();
+    builder.Services.AddSingleton<IBookingNotificationSender>(sp => sp.GetRequiredService<SmtpIdentityEmailSender>());
+    builder.Services.AddHostedService<BookingConfirmationConsumer>();
 
     // Data Protection's own key ring, persisted to disk so okeys survive app restarts
     var dataProtectionKeyPath = builder.Configuration["DataProtection:KeyPath"];
@@ -286,7 +298,7 @@ try
             await problemDetailsService.TryWriteAsync(new ProblemDetailsContext
             {
                 HttpContext = context.HttpContext,
-                ProblemDetails = problemDetails
+                ProblemDetails = problemDetails,
             });
         };
     });
