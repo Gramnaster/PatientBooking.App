@@ -24,6 +24,25 @@ services:
       retries: 10
       start_period: 20s
 
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    # No host port mapping, same reasoning as sqlserver above - the api service reaches this over
+    # the internal Compose network by service name, and 5672/15672 never need to be public. For ad
+    # hoc management-UI access, SSH-tunnel instead: ssh -L 15672:localhost:15672 <user>@<vps-host>,
+    # then browse localhost:15672 - see docs/deployment.md.
+    healthcheck:
+      test: rabbitmq-diagnostics check_port_connectivity
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
   api:
     # Dokploy builds this from the Dockerfile directly on deploy - no image to pull.
     build:
@@ -37,6 +56,11 @@ services:
       # eagerly at startup.
       sqlserver:
         condition: service_healthy
+      # Deliberately service_started, not service_healthy - the whole point of the outbox pattern
+      # (BookingOutboxDispatcher) is that the api must start and keep serving requests even if the
+      # broker isn't up yet. A booking still saves; its confirmation just waits in the outbox.
+      rabbitmq:
+        condition: service_started
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__PatientBookingDbConnectionString: "Server=sqlserver,1433;Database=PatientBookingDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
@@ -47,6 +71,11 @@ services:
       EmailSettings__Username: ${EMAIL_SETTINGS_USERNAME}
       EmailSettings__Password: ${EMAIL_SETTINGS_PASSWORD}
       Authentication__Google__ClientId: ${GOOGLE_CLIENT_ID}
+      RabbitMq__HostName: rabbitmq
+      RabbitMq__Port: 5672
+      RabbitMq__UserName: ${RABBITMQ_USER}
+      RabbitMq__Password: ${RABBITMQ_PASSWORD}
+      RabbitMq__VirtualHost: /
       # Optional: bootstrap one new admin account. Values come from Dokploy's .env.
       AdminSeed__Email: ${ADMIN_SEED_EMAIL:-}
       AdminSeed__Password: ${ADMIN_SEED_PASSWORD:-}
@@ -100,6 +129,7 @@ services:
 volumes:
   sqlserver-data:
   api-keys:
+  rabbitmq-data:
 
 networks:
   dokploy-network:

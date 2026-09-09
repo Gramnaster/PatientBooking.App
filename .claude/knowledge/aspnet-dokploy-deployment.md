@@ -149,3 +149,29 @@ with dates and distinguish agent-observed results from user reports.
 Update this note when deployment decisions change. Keep credentials out, link to the
 runbook instead of duplicating full procedures, and recheck current official documentation
 before prescribing version-sensitive commands or Dokploy UI steps.
+
+## RabbitMQ added to Compose (2026-09-09)
+
+`docker-compose.yml` gained a `rabbitmq` service (`rabbitmq:4-management-alpine`, no host ports,
+named volume `rabbitmq-data`, healthcheck via `rabbitmq-diagnostics check_port_connectivity`,
+credentials via `RABBITMQ_USER`/`RABBITMQ_PASSWORD`) - this is the first time RabbitMQ enters this
+file, so there is no existing-queue-argument conflict to account for on the deploy path.
+
+The retry/dead-letter behavior for `booking-confirmed` (delivery-limit 3, dead-letter to
+`booking-confirmed.failed`) ships as a broker **policy**, applied once manually per broker via
+`rabbitmqctl set_policy` (see the runbook's RabbitMQ section) - deliberately not automated via a
+`definitions.json` boot-time import. Verified locally: importing any `definitions.json` at boot
+(via `definitions.local.path`/`definitions.import_backend`) suppresses RabbitMQ's default
+vhost/user seeding entirely, including the `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS`
+env-var path - the broker booted with **zero users** and every credential silently stopped
+working until the vhost/users were also declared in the definitions file. Baking real credentials
+into a git-committed definitions file to work around that isn't acceptable, and there's no
+official post-boot hook for running `rabbitmqctl` once the server is actually up (confirmed via
+search - only third-party forks of the image offer one). A one-time manual policy step matches
+this repo's own existing precedent for migrations (`--migrate`, deliberately manual, not run on
+every startup) more than it looks like a shortcut.
+
+Verified locally only: `rabbitmq:4-management-alpine` boots cleanly with `RABBITMQ_DEFAULT_USER`/
+`RABBITMQ_DEFAULT_PASS` and no definitions file, `rabbitmqctl set_policy` applies and is visible
+via `rabbitmqctl list_policies`. Not verified: this Compose service on the actual VPS/Dokploy, or
+the policy step run against a deployed broker.

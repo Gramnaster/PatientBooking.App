@@ -19,7 +19,7 @@ public sealed class RabbitMqConnectionProvider(
     private IConnection? _connection;
     private DateTimeOffset? _lastFailureUtc;
 
-    public async Task<IChannel?> TryOpenChannelAsync(CancellationToken ct)
+    public async Task<IChannel?> TryOpenChannelAsync(CancellationToken ct, bool publisherConfirms = false)
     {
         IConnection? connection = await GetOrConnectAsync(ct);
         if (connection is null)
@@ -29,7 +29,16 @@ public sealed class RabbitMqConnectionProvider(
 
         try
         {
-            return await connection.CreateChannelAsync(cancellationToken: ct);
+            CreateChannelOptions? options = publisherConfirms
+                ? new CreateChannelOptions(
+                    publisherConfirmationsEnabled: true,
+                    publisherConfirmationTrackingEnabled: true,
+                    outstandingPublisherConfirmationsRateLimiter: null,
+                    consumerDispatchConcurrency: null
+                )
+                : null;
+
+            return await connection.CreateChannelAsync(options, cancellationToken: ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

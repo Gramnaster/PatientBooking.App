@@ -35,7 +35,10 @@ public static class AdminBootstrapper
 
         if (adminUserIds.Count > 0)
         {
-            if (user is null || adminUserIds.Count != 1 || !string.Equals(adminUserIds[0], user.Id, StringComparison.Ordinal) || user.DeletedAtUtc is not null)
+            if (
+                user is null || adminUserIds.Count != 1 ||
+                !string.Equals(adminUserIds[0], user.Id, StringComparison.Ordinal) || user.DeletedAtUtc is not null
+            )
             {
                 throw new InvalidOperationException(
                     "Admin bootstrap refused: an admin other than the configured active account exists."

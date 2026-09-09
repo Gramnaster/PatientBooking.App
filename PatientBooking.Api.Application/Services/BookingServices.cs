@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.IdentityModel.JsonWebTokens;
 using PatientBooking.Api.Application.Contracts;
 using PatientBooking.Api.Application.DTOs.Booking;
@@ -16,7 +18,6 @@ namespace PatientBooking.Api.Application.Services;
 public sealed class BookingServices(
     PatientBookingDbContext patientBookingDbContext,
     IHttpContextAccessor httpContextAccessor,
-    IBookingEventPublisher eventPublisher,
     TimeProvider clock
 ) : IBookingService
 {
@@ -330,6 +331,13 @@ public sealed class BookingServices(
             );
             await patientBookingDbContext.AddAsync(booking, ct);
 
+            // Booking insert and its outbox row commit together - a crash between them rolls both
+            // back rather than leaving a booking with no notification. On the caller's next attempt
+            // with the same idempotency key, the short-circuit above finds nothing and safely retries.
+            await using IDbContextTransaction transaction = await patientBookingDbContext.Database.BeginTransactionAsync(
+                ct
+            );
+
             try
             {
                 await patientBookingDbContext.SaveChangesAsync(ct);
@@ -347,26 +355,34 @@ public sealed class BookingServices(
             }
 
             GetBookingDto created = await ProjectByIdAsync(booking.Id, ct);
-            await PublishConfirmationAsync(booking.Id, patientId, created, ct);
+            string? patientEmail = await patientBookingDbContext
+                .Patients
+                .Where(p => p.Id == patientId)
+                .Select(p => p.User!.Email)
+                .FirstOrDefaultAsync(ct);
+
+            if (!string.IsNullOrWhiteSpace(patientEmail))
+            {
+                await EnqueueConfirmationAsync(booking.Id, patientEmail, created, ct);
+                await patientBookingDbContext.SaveChangesAsync(ct);
+            }
+
+            await transaction.CommitAsync(ct);
             return Result<GetBookingDto>.Success(created);
         }
 
         return Result<GetBookingDto>.Conflict("This appointment slot is no longer available.");
     }
 
-    private async Task PublishConfirmationAsync(int bookingId, int patientId, GetBookingDto bookingDto, CancellationToken ct)
+    private async Task EnqueueConfirmationAsync(
+        int bookingId,
+        string patientEmail,
+        GetBookingDto bookingDto,
+        CancellationToken ct
+    )
     {
-        string? patientEmail = await patientBookingDbContext.Patients
-            .Where(p => p.Id == patientId)
-            .Select(p => p.User!.Email)
-            .FirstOrDefaultAsync(ct);
-
-        if (string.IsNullOrWhiteSpace(patientEmail))
-        {
-            return;
-        }
-
         BookingConfirmedEvent evt = new(
+            Guid.CreateVersion7(),
             bookingId,
             bookingDto.BookingNumber,
             patientEmail,
@@ -376,7 +392,15 @@ public sealed class BookingServices(
             bookingDto.TotalPrice
         );
 
-        await eventPublisher.PublishBookingConfirmedAsync(evt, ct);
+        BookingOutboxMessage outboxMessage = new()
+        {
+            Id = evt.NotificationId,
+            BookingId = bookingId,
+            Payload = JsonSerializer.Serialize(evt),
+            CreatedAtUtc = clock.GetUtcNow(),
+        };
+
+        await patientBookingDbContext.AddAsync(outboxMessage, ct);
     }
 
     async Task<Result<GetBookingDto>> IBookingService.GetByIdForClinicAsync(

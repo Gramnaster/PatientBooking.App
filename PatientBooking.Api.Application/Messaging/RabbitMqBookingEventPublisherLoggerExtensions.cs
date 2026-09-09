@@ -12,4 +12,7 @@ internal static partial class RabbitMqBookingEventPublisherLoggerExtensions
 
     [LoggerMessage(EventId = 3203, Level = LogLevel.Warning, Message = "Failed to publish booking-confirmed event for booking {BookingId}.")]
     public static partial void BookingConfirmedPublishFailed(this ILogger logger, Exception exception, int bookingId);
+
+    [LoggerMessage(EventId = 3207, Level = LogLevel.Warning, Message = "Booking-confirmed event for booking {BookingId} was returned as unroutable: {ReplyText}")]
+    public static partial void BookingConfirmedPublishReturned(this ILogger logger, int bookingId, string replyText);
 }

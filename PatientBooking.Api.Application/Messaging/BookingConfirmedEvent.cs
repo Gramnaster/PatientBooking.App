@@ -1,7 +1,7 @@
 namespace PatientBooking.Api.Application.Messaging;
 
-public sealed record BookingConfirmedEvent
-(
+public sealed record BookingConfirmedEvent(
+    Guid NotificationId,
     int BookingId,
     string BookingNumber,
     string PatientEmail,

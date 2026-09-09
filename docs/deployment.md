@@ -62,3 +62,43 @@ or restart the API after that succeeds.
 The command uses EF Core's [MigrateAsync API](https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/applying#apply-migrations-at-runtime).
 The standard [dotnet ef CLI](https://learn.microsoft.com/en-us/ef/core/cli/dotnet)
 requires SDK/tooling and project files that are not included in this runtime image.
+
+## RabbitMQ
+
+Supply `RABBITMQ_USER` and `RABBITMQ_PASSWORD` in Dokploy's Compose **Environment** editor before
+first deploy - Compose maps them straight to the broker's `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS`
+and to the API's `RabbitMq__UserName`/`RabbitMq__Password`. Ports 5672 and 15672 have no host
+mapping, same as SQL Server - the API reaches the broker over the internal Compose network by
+service name, and the broker/management UI are never exposed publicly. For ad hoc inspection of
+queues, SSH-tunnel instead of opening a port:
+
+```sh
+ssh -L 15672:localhost:15672 <user>@<vps-host>
+```
+
+Then browse `http://localhost:15672` and sign in with `RABBITMQ_USER`/`RABBITMQ_PASSWORD`.
+
+The API starts and keeps serving bookings even if the broker is down or not yet deployed -
+confirmation emails queue up in the database outbox and get delivered once the broker's reachable.
+Nothing needs the broker to be healthy before the API starts.
+
+### Retry/dead-letter policy (one-time, per broker)
+
+The `booking-confirmed` queue's redelivery limit and dead-letter routing are applied as a broker
+**policy**, not as queue arguments - policies attach to an existing queue without redeclaring it,
+so there's nothing to conflict with if the queue already exists. This only needs to be run once per
+broker (it's stored with the broker's own metadata, alongside `rabbitmq-data`, and survives
+restarts/redeploys); a fresh broker with an empty volume needs it run again. From the `rabbitmq`
+container's terminal:
+
+```sh
+rabbitmqctl set_policy booking-confirmed-retry-limit "^booking-confirmed$" \
+  '{"delivery-limit":3,"dead-letter-exchange":"booking-confirmed.dlx","dead-letter-routing-key":"booking-confirmed.failed"}' \
+  --apply-to queues
+```
+
+Verify with `rabbitmqctl list_policies`. Messages that exhaust their 3 delivery attempts, or that
+fail to deserialize at all, land in the durable `booking-confirmed.failed` queue (declared
+automatically by the app, same as the main queue) with full `x-death` history for diagnosis - see
+[RabbitMQ's dead-lettering docs](https://www.rabbitmq.com/docs/dlx) and
+[quorum queue delivery limits](https://www.rabbitmq.com/docs/quorum-queues#poison-message-handling).

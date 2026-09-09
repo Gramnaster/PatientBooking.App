@@ -87,6 +87,10 @@ public class UsersService(
                 patient.Id,
                 IdentifierCodeEncoder.MedicalRecordNumberShape
             );
+
+            // Inform the user by email their registration is confirmed
+            await SendConfirmationEmailAsync(user);
+
             await patientBookingDbContext.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
         }
@@ -94,9 +98,6 @@ public class UsersService(
         {
             return Result<RegisteredUserDto>.Conflict("Could not create a patient profile. Please try again.");
         }
-
-        // Inform the user by email their registration is confirmed
-        await SendConfirmationEmailAsync(user);
 
         // User now has an ID at this point, which we can use to finalise the creation
         RegisteredUserDto registeredUserDto = new()

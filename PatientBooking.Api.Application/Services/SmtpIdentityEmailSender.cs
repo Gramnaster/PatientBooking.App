@@ -69,9 +69,12 @@ public sealed class SmtpIdentityEmailSender(
         return SendEmailAsync(
             evt.PatientEmail,
             $"Booking confirmed - {evt.BookingNumber}",
-            $"Hi {evt.PatientFullName}, your booking {evt.BookingNumber} at {evt.ClinicName} is confirmed for" +
-            string.Create(CultureInfo.InvariantCulture, $"{evt.AppointmentStartUtc:u} UTC. Total: {evt.TotalPrice:C}."),
-            ct);
+            $"Hi {evt.PatientFullName}, your booking {evt.BookingNumber} at {evt.ClinicName} is confirmed for" + string.Create(
+                CultureInfo.InvariantCulture,
+                $"{evt.AppointmentStartUtc:u} UTC. Total: {evt.TotalPrice:C}."
+            ),
+            ct
+        );
     }
 
     private async Task SendEmailAsync(string toEmail, string subject, string htmlBody, CancellationToken ct = default)

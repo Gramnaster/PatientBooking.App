@@ -213,6 +213,7 @@ try
     builder.Services.AddSingleton<IBookingEventPublisher, RabbitMqBookingEventPublisher>();
     builder.Services.AddSingleton<IBookingNotificationSender>(sp => sp.GetRequiredService<SmtpIdentityEmailSender>());
     builder.Services.AddHostedService<BookingConfirmationConsumer>();
+    builder.Services.AddHostedService<BookingOutboxDispatcher>();
 
     // Data Protection's own key ring, persisted to disk so okeys survive app restarts
     var dataProtectionKeyPath = builder.Configuration["DataProtection:KeyPath"];
@@ -336,7 +337,8 @@ try
             scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>(),
             scope.ServiceProvider.GetRequiredService<PatientBookingDbContext>(),
             scope.ServiceProvider.GetRequiredService<IOptions<AdminSeedSettings>>().Value,
-            scope.ServiceProvider.GetRequiredService<TimeProvider>());
+            scope.ServiceProvider.GetRequiredService<TimeProvider>()
+        );
     }
 
     // First in the pipeline so it wraps every downstream middleware and endpoint
