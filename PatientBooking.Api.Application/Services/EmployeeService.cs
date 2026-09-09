@@ -163,9 +163,34 @@ public sealed class EmployeeService(
             return Result.NotFound(string.Create(CultureInfo.InvariantCulture, $"Employee {id} not found."));
         }
 
-        employee.UpdatedAtUtc = clock.GetUtcNow();
-        employee.DeletedAtUtc = clock.GetUtcNow();
+        await using var transaction = await patientBookingDbContext.Database.BeginTransactionAsync(ct);
+        var user = await userManager.FindByIdAsync(employee.UserId);
+        if (user is null)
+            return Result.NotFound("Employee account not found.");
+
+        var now = clock.GetUtcNow();
+        user.UpdatedAtUtc = now;
+        user.DeletedAtUtc = now;
+        user.LockoutEnabled = true;
+        user.LockoutEnd = DateTimeOffset.MaxValue;
+
+        var updateResult = await userManager.UpdateSecurityStampAsync(user);
+        if (!updateResult.Succeeded)
+            return Result.Failure(
+                updateResult.Errors.Select(e => new ResultError(nameof(ErrorCodes.BadRequest), e.Description)).ToArray()
+            );
+
+        var tokens = await patientBookingDbContext
+            .RefreshTokens
+            .Where(t => t.UserId == user.Id && t.RevokedAtUtc == null)
+            .ToListAsync(ct);
+        foreach (var token in tokens)
+            token.RevokedAtUtc = now;
+
+        employee.UpdatedAtUtc = now;
+        employee.DeletedAtUtc = now;
         await patientBookingDbContext.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
 
         return Result.Success();
     }

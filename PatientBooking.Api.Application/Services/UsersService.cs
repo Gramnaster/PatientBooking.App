@@ -342,7 +342,7 @@ public class UsersService(
             return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), _invalidRefreshTokens));
         }
 
-        if (!existing.IsActive)
+        if (!existing.IsActive || existing.User.DeletedAtUtc is not null)
         {
             return Result<LoginResponseDto>.Failure(new ResultError(nameof(ErrorCodes.Forbid), _invalidRefreshTokens));
         }
@@ -439,7 +439,7 @@ public class UsersService(
     {
         if (await patientBookingDbContext.Admins.AnyAsync(a => a.UserId == userId, ct))
             return "Admin";
-        if (await patientBookingDbContext.Employees.AnyAsync(e => e.UserId == userId, ct))
+        if (await patientBookingDbContext.Employees.AnyAsync(e => e.UserId == userId && e.DeletedAtUtc == null, ct))
             return "Employee";
         if (await patientBookingDbContext.Patients.AnyAsync(p => p.UserId == userId, ct))
             return "Patient";

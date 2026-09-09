@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
@@ -155,6 +156,22 @@ try
                 ValidAudience = jwtSettings.Audience,
                 IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Key)),
                 ClockSkew = TimeSpan.Zero, // Default is 5 mins
+            };
+            options.Events = new JwtBearerEvents
+            {
+                OnTokenValidated = async context =>
+                {
+                    var userId = context.Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                    var db = context.HttpContext.RequestServices.GetRequiredService<PatientBookingDbContext>();
+                    if (
+                        string.IsNullOrEmpty(userId) ||
+                        !await db.Users.AnyAsync(
+                            user => user.Id == userId && user.DeletedAtUtc == null,
+                            context.HttpContext.RequestAborted
+                        )
+                    )
+                        context.Fail("Account is unavailable.");
+                },
             };
         });
 
