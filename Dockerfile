@@ -18,6 +18,11 @@ RUN dotnet publish PatientBooking.Api/PatientBooking.Api.csproj -c Release -o /a
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
+# A fresh named volume inherits this directory's ownership and permissions.
+RUN mkdir -p /app/keys \
+    && chown "$APP_UID" /app/keys \
+    && chmod 700 /app/keys
+
 # $APP_UID is baked into the aspnet base image (non-root since .NET 8) -
 # https://learn.microsoft.com/en-us/dotnet/core/docker/build-container#non-root-user
 USER $APP_UID

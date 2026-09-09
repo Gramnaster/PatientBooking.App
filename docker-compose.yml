@@ -51,6 +51,9 @@ services:
       # Bind-mounted so Serilog's File sink (appsettings.Production.json) survives container
       # recreation instead of being lost with the container's writable layer.
       - ./Logs:/app/Logs
+      # Preserve encryption keys across redeployments. Never delete this volume while
+      # retaining user data; preserve any existing keys before the first deployment.
+      - api-keys:/app/keys
     ports:
       # Dokploy's Traefik reaches this over its internal Docker network by service name (api:8080),
       # not through this mapping - it's here for local dev (`curl localhost:8080`). Safe in
@@ -91,6 +94,7 @@ services:
 
 volumes:
   sqlserver-data:
+  api-keys:
 
 networks:
   dokploy-network:

@@ -102,8 +102,14 @@ and [Microsoft's NETSDK1064 guidance](https://learn.microsoft.com/en-us/dotnet/c
   trust. [Docker documents its interaction with host firewall rules](https://docs.docker.com/engine/network/packet-filtering-firewalls/).
 - SQL data uses a named volume and logs use a bind mount. Preserve the deployed volume
   identity during recovery; never suggest deleting volumes to fix a missing database.
-  Current Compose does not mount `/app/keys`; check Data Protection key persistence
-  separately before treating container recreation as preserving all application state.
+  Compose now mounts `api-keys` at `/app/keys`. The Dockerfile prepares that directory
+  for the non-root app user with mode 700, inherited by a new empty named volume.
+  This fixes the reported registration failure (`Access to the path '/app/keys' is denied`).
+  Preserve existing keys before the first deployment of this change. Existing volumes
+  retain their own permissions; rebuilding the image does not repair those permissions.
+  Keys are excluded from Docker's build context and must stay out of source control.
+  Filesystem permissions do not encrypt the key files or prevent VPS/Docker administrators
+  from reading them. Back up the keys securely alongside the database.
 
 ## PostgreSQL for future applications
 
