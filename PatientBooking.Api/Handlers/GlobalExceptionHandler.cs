@@ -10,7 +10,7 @@ internal sealed class GlobalExceptionHandler(
     ILogger<GlobalExceptionHandler> logger
 ) : IExceptionHandler
 {
-    public async ValueTask<bool> TryHandleAsync(
+    public ValueTask<bool> TryHandleAsync(
         HttpContext httpContext,
         Exception exception,
         CancellationToken cancellationToken
@@ -20,7 +20,7 @@ internal sealed class GlobalExceptionHandler(
 
         httpContext.Response.StatusCode = StatusCodes.Status500InternalServerError;
 
-        return await problemDetailsService.TryWriteAsync(new ProblemDetailsContext
+        return problemDetailsService.TryWriteAsync(new ProblemDetailsContext
         {
             HttpContext = httpContext,
             Exception = exception,
