@@ -47,6 +47,11 @@ services:
       EmailSettings__Username: ${EMAIL_SETTINGS_USERNAME}
       EmailSettings__Password: ${EMAIL_SETTINGS_PASSWORD}
       Authentication__Google__ClientId: ${GOOGLE_CLIENT_ID}
+      # Optional: bootstrap one new admin account. Values come from Dokploy's .env.
+      AdminSeed__Email: ${ADMIN_SEED_EMAIL:-}
+      AdminSeed__Password: ${ADMIN_SEED_PASSWORD:-}
+      AdminSeed__FirstName: ${ADMIN_SEED_FIRST_NAME:-}
+      AdminSeed__LastName: ${ADMIN_SEED_LAST_NAME:-}
     volumes:
       # Bind-mounted so Serilog's File sink (appsettings.Production.json) survives container
       # recreation instead of being lost with the container's writable layer.

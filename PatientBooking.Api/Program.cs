@@ -303,40 +303,11 @@ try
 
     await using (var scope = app.Services.CreateAsyncScope())
     {
-        var db = scope.ServiceProvider.GetRequiredService<PatientBookingDbContext>();
-        var seedEmail = scope.ServiceProvider.GetRequiredService<IOptions<AdminSeedSettings>>().Value.Email;
-
-        if (!string.IsNullOrWhiteSpace(seedEmail))
-        {
-            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
-            ApplicationUser? user = await userManager.FindByEmailAsync(seedEmail);
-
-            if (user is null)
-            {
-                Log.Warning("AdminSeed configured but no matching registered user was found. Skipping...");
-            }
-            else
-            {
-                bool isAlreadyAdmin = await db.Admins.AnyAsync(a => a.UserId == user.Id, CancellationToken.None);
-
-                if (!isAlreadyAdmin)
-                {
-                    var seedClock = scope.ServiceProvider.GetRequiredService<TimeProvider>();
-                    Admin admin = new() { UserId = user.Id, CreatedAtUtc = seedClock.GetUtcNow() };
-                    db.Admins.Add(admin);
-
-                    await using var transaction = await db.Database.BeginTransactionAsync(CancellationToken.None);
-                    await db.SaveChangesAsync(CancellationToken.None);
-
-                    admin.AdminNumber = IdentifierCodeEncoder.Encode(admin.Id, IdentifierCodeEncoder.AdminNumberShape);
-                    await db.SaveChangesAsync(CancellationToken.None);
-
-                    await transaction.CommitAsync(CancellationToken.None);
-
-                    Log.Information("Seeded Admin for userId {UserId}", user.Id);
-                }
-            }
-        }
+        await AdminBootstrapper.SeedAsync(
+            scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>(),
+            scope.ServiceProvider.GetRequiredService<PatientBookingDbContext>(),
+            scope.ServiceProvider.GetRequiredService<IOptions<AdminSeedSettings>>().Value,
+            scope.ServiceProvider.GetRequiredService<TimeProvider>());
     }
 
     // First in the pipeline so it wraps every downstream middleware and endpoint

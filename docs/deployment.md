@@ -1,5 +1,36 @@
 # Manual database migrations
 
+## Initial admin account
+
+In Dokploy's Compose **Environment** editor, supply these private values before deploying:
+
+```dotenv
+ADMIN_SEED_EMAIL=your-unused-admin-email@example.com
+ADMIN_SEED_PASSWORD='replace-with-a-strong-unique-password'
+ADMIN_SEED_FIRST_NAME=YourFirstName
+ADMIN_SEED_LAST_NAME=YourLastName
+```
+
+Do not register this email through the public API first. Startup creates the Identity
+account with a hashed password, confirmed email, patient profile/MRN, and admin profile/number
+in one transaction. It sends no confirmation email. The configured password must satisfy
+the application's Identity password policy. Keep real values out of Git and logs.
+
+Deploy the commit containing the Compose mappings. Ensure database migrations have been
+applied first; the recovery migrator skips admin bootstrap if the API cannot start.
+Log in through `/api/Auth/login` using the configured credentials after deployment.
+
+Later startups leave the same admin and password unchanged. Remove `ADMIN_SEED_PASSWORD`
+from Dokploy after successful creation and redeploy to remove it from the container environment;
+retain the email to check the admin identity on subsequent startups. Password changes use
+the account's password-reset flow, not deployment settings.
+
+An existing non-admin account with that email, a different existing admin, or multiple
+admins causes startup to fail. No existing user is silently promoted, deleted, or demoted.
+An empty admin email disables bootstrap. Existing volumes and account records are preserved.
+
+## Apply migrations
+
 Deploy the latest code through Dokploy, open the **api** container terminal (working
 directory `/app`), and run:
 
