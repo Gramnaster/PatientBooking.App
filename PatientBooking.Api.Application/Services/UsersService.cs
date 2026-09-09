@@ -834,7 +834,7 @@ public class UsersService(
         var passwordError = await ConfirmPasswordIfRequiredAsync(user, password);
         if (passwordError is not null)
         {
-            return passwordError.Value!;
+            return passwordError.Value;
         }
 
         var lastAdminError = await BlockIfLastAdminAsync(user);
