@@ -798,10 +798,7 @@ public class UsersService(
             return passwordError.Value;
 
         var lastAdminError = await BlockIfLastAdminAsync(user);
-        if (lastAdminError is not null)
-            return lastAdminError.Value;
-
-        return await SoftDeleteCoreAsync(user, ct);
+        return lastAdminError ?? await SoftDeleteCoreAsync(user, ct);
     }
 
     private async Task<Result> SoftDeleteCoreAsync(ApplicationUser user, CancellationToken ct)
@@ -841,12 +838,7 @@ public class UsersService(
         }
 
         var lastAdminError = await BlockIfLastAdminAsync(user);
-        if (lastAdminError is not null)
-        {
-            return lastAdminError.Value;
-        }
-
-        return await HardDeleteCoreAsync(user);
+        return lastAdminError ?? await HardDeleteCoreAsync(user);
     }
 
     // Admin path, by target userId - no password re-auth here (an admin can't know a target's

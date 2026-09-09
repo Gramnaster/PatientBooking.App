@@ -19,9 +19,11 @@ public static class AdminBootstrapper
         if (string.IsNullOrWhiteSpace(settings.Email))
         {
             if (!string.IsNullOrEmpty(settings.Password))
+            {
                 throw new InvalidOperationException(
                     "AdminSeed:Email is required when a bootstrap password is supplied."
                 );
+            }
 
             return;
         }

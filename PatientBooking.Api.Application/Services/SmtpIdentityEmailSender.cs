@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Sockets;
 using MailKit.Net.Smtp;
 using MailKit.Security;
@@ -69,7 +70,7 @@ public sealed class SmtpIdentityEmailSender(
             evt.PatientEmail,
             $"Booking confirmed - {evt.BookingNumber}",
             $"Hi {evt.PatientFullName}, your booking {evt.BookingNumber} at {evt.ClinicName} is confirmed for" +
-            $"{evt.AppointmentStartUtc:u} UTC. Total: {evt.TotalPrice:C}.",
+            string.Create(CultureInfo.InvariantCulture, $"{evt.AppointmentStartUtc:u} UTC. Total: {evt.TotalPrice:C}."),
             ct);
     }
 
