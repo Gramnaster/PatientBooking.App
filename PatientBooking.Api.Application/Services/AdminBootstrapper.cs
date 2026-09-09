@@ -13,12 +13,15 @@ public static class AdminBootstrapper
         PatientBookingDbContext db,
         AdminSeedSettings settings,
         TimeProvider clock,
-        CancellationToken ct = default)
+        CancellationToken ct = default
+    )
     {
         if (string.IsNullOrWhiteSpace(settings.Email))
         {
             if (!string.IsNullOrEmpty(settings.Password))
-                throw new InvalidOperationException("AdminSeed:Email is required when a bootstrap password is supplied.");
+                throw new InvalidOperationException(
+                    "AdminSeed:Email is required when a bootstrap password is supplied."
+                );
 
             return;
         }
@@ -30,8 +33,12 @@ public static class AdminBootstrapper
 
         if (adminUserIds.Count > 0)
         {
-            if (user is null || adminUserIds.Count != 1 || adminUserIds[0] != user.Id || user.DeletedAtUtc is not null)
-                throw new InvalidOperationException("Admin bootstrap refused: an admin other than the configured active account exists.");
+            if (user is null || adminUserIds.Count != 1 || !string.Equals(adminUserIds[0], user.Id, StringComparison.Ordinal) || user.DeletedAtUtc is not null)
+            {
+                throw new InvalidOperationException(
+                    "Admin bootstrap refused: an admin other than the configured active account exists."
+                );
+            }
 
             // Never reset an existing admin's password from deployment configuration.
             await transaction.CommitAsync(ct);
@@ -39,12 +46,22 @@ public static class AdminBootstrapper
         }
 
         if (user is not null)
-            throw new InvalidOperationException("Admin bootstrap refused: the configured email already belongs to a non-admin account. Use an unused email.");
+        {
+            throw new InvalidOperationException(
+                "Admin bootstrap refused: the configured email already belongs to a non-admin account. Use an unused email."
+            );
+        }
 
-        if (string.IsNullOrWhiteSpace(settings.Password) ||
-            string.IsNullOrWhiteSpace(settings.FirstName) ||
-            string.IsNullOrWhiteSpace(settings.LastName))
-            throw new InvalidOperationException("Creating the initial admin requires AdminSeed:Password, FirstName and LastName.");
+        if (
+            string.IsNullOrWhiteSpace(settings.Password) || string.IsNullOrWhiteSpace(
+                settings.FirstName
+            ) || string.IsNullOrWhiteSpace(settings.LastName)
+        )
+        {
+            throw new InvalidOperationException(
+                "Creating the initial admin requires AdminSeed:Password, FirstName and LastName."
+            );
+        }
 
         user = new ApplicationUser
         {
@@ -59,8 +76,14 @@ public static class AdminBootstrapper
 
         var result = await userManager.CreateAsync(user, settings.Password);
         if (!result.Succeeded)
-            throw new InvalidOperationException("Admin account creation failed. Identity error codes: " +
-                string.Join(", ", result.Errors.Select(e => e.Code)));
+        {
+            throw new InvalidOperationException(
+                "Admin account creation failed. Identity error codes: " + string.Join(
+                    ", ",
+                    result.Errors.Select(e => e.Code)
+                )
+            );
+        }
 
         var patient = new Patient { UserId = user.Id, CreatedAtUtc = clock.GetUtcNow() };
         var admin = new Admin { UserId = user.Id, CreatedAtUtc = clock.GetUtcNow() };
@@ -68,7 +91,10 @@ public static class AdminBootstrapper
         db.Admins.Add(admin);
         await db.SaveChangesAsync(ct);
 
-        patient.MedicalRecordNumber = IdentifierCodeEncoder.Encode(patient.Id, IdentifierCodeEncoder.MedicalRecordNumberShape);
+        patient.MedicalRecordNumber = IdentifierCodeEncoder.Encode(
+            patient.Id,
+            IdentifierCodeEncoder.MedicalRecordNumberShape
+        );
         admin.AdminNumber = IdentifierCodeEncoder.Encode(admin.Id, IdentifierCodeEncoder.AdminNumberShape);
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);

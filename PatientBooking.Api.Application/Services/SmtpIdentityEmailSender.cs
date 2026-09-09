@@ -1,7 +1,4 @@
-using System;
-using System.Collections.Generic;
 using System.Net.Sockets;
-using System.Text;
 using MailKit.Net.Smtp;
 using MailKit.Security;
 using Microsoft.AspNetCore.Identity;
@@ -10,6 +7,7 @@ using Microsoft.Extensions.Options;
 using MimeKit;
 using MimeKit.Text;
 using PatientBooking.Api.Application.Contracts;
+using PatientBooking.Api.Application.Messaging;
 using PatientBooking.Api.Common.Models.Config;
 using PatientBooking.Api.Domain;
 
@@ -18,7 +16,7 @@ namespace PatientBooking.Api.Application.Services;
 public sealed class SmtpIdentityEmailSender(
     IOptions<EmailSettings> emailOptions,
     ILogger<SmtpIdentityEmailSender> logger
-) : IEmailSender<ApplicationUser>, ILoginNotificationSender
+) : IEmailSender<ApplicationUser>, ILoginNotificationSender, IBookingNotificationSender
 {
     public Task SendConfirmationLinkAsync(ApplicationUser user, string email, string confirmationLink) =>
         SendEmailAsync(
@@ -63,6 +61,16 @@ public sealed class SmtpIdentityEmailSender(
             // Runs after login already committed the refresh token - a failed notification must not fail the login.
             logger.LoginNotificationSendFailed(ex, user.Email!);
         }
+    }
+
+    public Task SendBookingConfirmationAsync(BookingConfirmedEvent evt, CancellationToken ct)
+    {
+        return SendEmailAsync(
+            evt.PatientEmail,
+            $"Booking confirmed - {evt.BookingNumber}",
+            $"Hi {evt.PatientFullName}, your booking {evt.BookingNumber} at {evt.ClinicName} is confirmed for" +
+            $"{evt.AppointmentStartUtc:u} UTC. Total: {evt.TotalPrice:C}.",
+            ct);
     }
 
     private async Task SendEmailAsync(string toEmail, string subject, string htmlBody, CancellationToken ct = default)

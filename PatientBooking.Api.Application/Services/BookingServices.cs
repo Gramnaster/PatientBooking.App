@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.JsonWebTokens;
 using PatientBooking.Api.Application.Contracts;
 using PatientBooking.Api.Application.DTOs.Booking;
 using PatientBooking.Api.Application.Mappers;
+using PatientBooking.Api.Application.Messaging;
 using PatientBooking.Api.Common.Enums;
 using PatientBooking.Api.Common.Results;
 using PatientBooking.Api.Domain;
@@ -15,6 +16,7 @@ namespace PatientBooking.Api.Application.Services;
 public sealed class BookingServices(
     PatientBookingDbContext patientBookingDbContext,
     IHttpContextAccessor httpContextAccessor,
+    IBookingEventPublisher eventPublisher,
     TimeProvider clock
 ) : IBookingService
 {
@@ -344,10 +346,37 @@ public sealed class BookingServices(
                 return Result<GetBookingDto>.Conflict("This appointment slot is no longer available.");
             }
 
-            return Result<GetBookingDto>.Success(await ProjectByIdAsync(booking.Id, ct));
+            GetBookingDto created = await ProjectByIdAsync(booking.Id, ct);
+            await PublishConfirmationAsync(booking.Id, patientId, created, ct);
+            return Result<GetBookingDto>.Success(created);
         }
 
         return Result<GetBookingDto>.Conflict("This appointment slot is no longer available.");
+    }
+
+    private async Task PublishConfirmationAsync(int bookingId, int patientId, GetBookingDto bookingDto, CancellationToken ct)
+    {
+        string? patientEmail = await patientBookingDbContext.Patients
+            .Where(p => p.Id == patientId)
+            .Select(p => p.User!.Email)
+            .FirstOrDefaultAsync(ct);
+
+        if (string.IsNullOrWhiteSpace(patientEmail))
+        {
+            return;
+        }
+
+        BookingConfirmedEvent evt = new(
+            bookingId,
+            bookingDto.BookingNumber,
+            patientEmail,
+            bookingDto.PatientFullName,
+            bookingDto.ClinicName,
+            bookingDto.AppointmentStartUtc,
+            bookingDto.TotalPrice
+        );
+
+        await eventPublisher.PublishBookingConfirmedAsync(evt, ct);
     }
 
     async Task<Result<GetBookingDto>> IBookingService.GetByIdForClinicAsync(
