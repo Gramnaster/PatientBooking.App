@@ -337,7 +337,8 @@ try
             scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>(),
             scope.ServiceProvider.GetRequiredService<PatientBookingDbContext>(),
             scope.ServiceProvider.GetRequiredService<IOptions<AdminSeedSettings>>().Value,
-            scope.ServiceProvider.GetRequiredService<TimeProvider>()
+            scope.ServiceProvider.GetRequiredService<TimeProvider>(),
+            app.Logger
         );
     }
 

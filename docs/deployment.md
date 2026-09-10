@@ -25,8 +25,10 @@ from Dokploy after successful creation and redeploy to remove it from the contai
 retain the email to check the admin identity on subsequent startups. Password changes use
 the account's password-reset flow, not deployment settings.
 
-An existing non-admin account with that email, a different existing admin, or multiple
-admins causes startup to fail. No existing user is silently promoted, deleted, or demoted.
+An existing non-admin account with that email logs an error and skips admin creation;
+the API still starts. Use an unused email and redeploy to create the admin.
+A different existing admin or multiple admins still causes startup to fail.
+No existing user is silently promoted, deleted, or demoted.
 An empty admin email disables bootstrap. Existing volumes and account records are preserved.
 
 ## Apply migrations

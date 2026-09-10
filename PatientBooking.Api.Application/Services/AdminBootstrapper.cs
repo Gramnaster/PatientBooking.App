@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using PatientBooking.Api.Common.Models.Config;
 using PatientBooking.Api.Domain;
 
@@ -13,6 +14,7 @@ public static class AdminBootstrapper
         PatientBookingDbContext db,
         AdminSeedSettings settings,
         TimeProvider clock,
+        ILogger logger,
         CancellationToken ct = default
     )
     {
@@ -52,9 +54,11 @@ public static class AdminBootstrapper
 
         if (user is not null)
         {
-            throw new InvalidOperationException(
-                "Admin bootstrap refused: the configured email already belongs to a non-admin account. Use an unused email."
+            logger.LogError(
+                "Admin bootstrap skipped: the configured email already belongs to a non-admin account. " +
+                    "Use an unused ADMIN_SEED_EMAIL and redeploy. The API will start without creating an admin."
             );
+            return;
         }
 
         if (
