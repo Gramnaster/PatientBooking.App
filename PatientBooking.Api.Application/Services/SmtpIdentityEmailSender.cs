@@ -24,21 +24,22 @@ public sealed class SmtpIdentityEmailSender(
         SendEmailAsync(
             email,
             "Confirm your email",
-            $"""Please confirm your Patient Booking account by <a href="{confirmationLink}">clicking here</a>"""
+            $"""Please confirm your Patient Booking account by <a href="{WebUtility.HtmlEncode(confirmationLink)}">clicking here</a>"""
         );
 
+    // A reset CODE is meant to be typed into the app, not clicked - it must never render as a link.
     public Task SendPasswordResetCodeAsync(ApplicationUser user, string email, string resetCode) =>
         SendEmailAsync(
             email,
             "Reset your password",
-            $"""Please reset your password by <a href="{resetCode}">clicking here</a>"""
+            $"""Your Patient Booking password reset code is: <strong>{WebUtility.HtmlEncode(resetCode)}</strong>. Enter it in the app to reset your password."""
         );
 
     public Task SendPasswordResetLinkAsync(ApplicationUser user, string email, string resetLink) =>
         SendEmailAsync(
             email,
             "Reset your password",
-            $"""Please reset your password by <a href="{resetLink}">clicking here</a>"""
+            $"""Please reset your password by <a href="{WebUtility.HtmlEncode(resetLink)}">clicking here</a>"""
         );
 
     public async Task SendLoginNotificationAsync(
@@ -53,7 +54,8 @@ public sealed class SmtpIdentityEmailSender(
             await SendEmailAsync(
                 user.Email!,
                 "New sign-in to your account",
-                $"Your Patient Booking account was just signed into from IP {ipAddress} at {occuredAtUtc:u} UTC." +
+                // ":u" already appends a trailing "Z" (UniversalSortableDateTimePattern) - do not also append "UTC".
+                $"Your Patient Booking account was just signed into from IP {ipAddress} at {occuredAtUtc:u}. " +
                     "If this wasn't you, reset your password immediately and review your active sessions.",
                 ct
             );
