@@ -15,6 +15,7 @@ using PatientBooking.Api.Common.Models.Config;
 using PatientBooking.Api.Common.Results;
 using PatientBooking.Api.Domain;
 using System.Globalization;
+using System.Net;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -40,6 +41,11 @@ public class UsersService(
     private const string _userNotFound = "User not found.";
     private const string _invalidCredentials = "Invalid Credentials.";
     private const string _invalidRefreshTokens = "Invalid or expired refresh tokens.";
+
+    // Matches ASP.NET Core Identity's default DataProtectionTokenProviderOptions.TokenLifespan (1
+    // day) - Program.cs does not override it. If that default is ever configured explicitly, this
+    // must change with it so a queued email's expiry can't outlive (or undercut) the token itself.
+    private static readonly TimeSpan ConfirmationLinkLifespan = TimeSpan.FromDays(1);
 
     // 2FA Properties
     private const int PendingTokenMinutes = 5;
@@ -179,19 +185,41 @@ public class UsersService(
     private async Task EnqueueConfirmationEmailAsync(ApplicationUser user, CancellationToken ct)
     {
         var confirmationLink = await BuildConfirmationLinkAsync(user);
+        (string subject, string htmlBody) = ComposeConfirmationEmail(confirmationLink);
+        DateTimeOffset now = clock.GetUtcNow();
 
-        RegistrationConfirmationEvent evt = new(Guid.CreateVersion7(), user.Id, user.Email!, confirmationLink);
+        // Same subject/body SendConfirmationEmailAsync has always sent - only the composition point
+        // moved, from SmtpIdentityEmailSender (post-dequeue) to here (pre-stage), so the shared
+        // consumer never needs registration-specific formatting knowledge. Expiry is aligned to the
+        // token's own lifespan: a link delivered after the token has expired would just fail
+        // ConfirmEmailAsync anyway, so there is no point sending (or recording as sent) an email past
+        // that point.
+        EmailEnvelope evt = new(
+            Guid.CreateVersion7(),
+            user.Email!,
+            subject,
+            htmlBody,
+            PlainTextBody: null,
+            now,
+            now + ConfirmationLinkLifespan,
+            Kind: "RegistrationConfirmation"
+        );
 
-        RegistrationOutboxMessage outboxMessage = new()
+        EmailOutboxMessage outboxMessage = new()
         {
             Id = evt.NotificationId,
-            UserId = user.Id,
+            Recipient = user.Email!,
+            Kind = evt.Kind,
             Payload = JsonSerializer.Serialize(evt),
-            CreatedAtUtc = clock.GetUtcNow(),
+            CreatedAtUtc = now,
         };
 
         await patientBookingDbContext.AddAsync(outboxMessage, ct);
     }
+
+    // Same subject/body as SendConfirmationEmailAsync above.
+    private static (string Subject, string HtmlBody) ComposeConfirmationEmail(string confirmationLink) =>
+        ("Confirm your email", $"""Please confirm your Patient Booking account by <a href="{WebUtility.HtmlEncode(confirmationLink)}">clicking here</a>""");
 
     public async Task<Result<LoginResponseDto>> LoginAsync(LoginUserDto loginUserDto, CancellationToken ct)
     {

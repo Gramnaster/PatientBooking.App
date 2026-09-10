@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using MailKit.Net.Smtp;
@@ -9,7 +8,6 @@ using Microsoft.Extensions.Options;
 using MimeKit;
 using MimeKit.Text;
 using PatientBooking.Api.Application.Contracts;
-using PatientBooking.Api.Application.Messaging;
 using PatientBooking.Api.Common.Models.Config;
 using PatientBooking.Api.Domain;
 
@@ -18,28 +16,34 @@ namespace PatientBooking.Api.Application.Services;
 public sealed class SmtpIdentityEmailSender(
     IOptions<EmailSettings> emailOptions,
     ILogger<SmtpIdentityEmailSender> logger
-) : IEmailSender<ApplicationUser>, ILoginNotificationSender, IBookingNotificationSender, IRegistrationNotificationSender
+) : IEmailSender<ApplicationUser>, ILoginNotificationSender, IEmailTransportSender
 {
     public Task SendConfirmationLinkAsync(ApplicationUser user, string email, string confirmationLink) =>
-        SendEmailAsync(
+        SendAsync(
             email,
             "Confirm your email",
-            $"""Please confirm your Patient Booking account by <a href="{WebUtility.HtmlEncode(confirmationLink)}">clicking here</a>"""
+            $"""Please confirm your Patient Booking account by <a href="{WebUtility.HtmlEncode(confirmationLink)}">clicking here</a>""",
+            plainTextBody: null,
+            CancellationToken.None
         );
 
     // A reset CODE is meant to be typed into the app, not clicked - it must never render as a link.
     public Task SendPasswordResetCodeAsync(ApplicationUser user, string email, string resetCode) =>
-        SendEmailAsync(
+        SendAsync(
             email,
             "Reset your password",
-            $"""Your Patient Booking password reset code is: <strong>{WebUtility.HtmlEncode(resetCode)}</strong>. Enter it in the app to reset your password."""
+            $"""Your Patient Booking password reset code is: <strong>{WebUtility.HtmlEncode(resetCode)}</strong>. Enter it in the app to reset your password.""",
+            plainTextBody: null,
+            CancellationToken.None
         );
 
     public Task SendPasswordResetLinkAsync(ApplicationUser user, string email, string resetLink) =>
-        SendEmailAsync(
+        SendAsync(
             email,
             "Reset your password",
-            $"""Please reset your password by <a href="{WebUtility.HtmlEncode(resetLink)}">clicking here</a>"""
+            $"""Please reset your password by <a href="{WebUtility.HtmlEncode(resetLink)}">clicking here</a>""",
+            plainTextBody: null,
+            CancellationToken.None
         );
 
     public async Task SendLoginNotificationAsync(
@@ -51,12 +55,13 @@ public sealed class SmtpIdentityEmailSender(
     {
         try
         {
-            await SendEmailAsync(
+            await SendAsync(
                 user.Email!,
                 "New sign-in to your account",
                 // ":u" already appends a trailing "Z" (UniversalSortableDateTimePattern) - do not also append "UTC".
                 $"Your Patient Booking account was just signed into from IP {ipAddress} at {occuredAtUtc:u}. " +
                     "If this wasn't you, reset your password immediately and review your active sessions.",
+                plainTextBody: null,
                 ct
             );
         }
@@ -67,30 +72,16 @@ public sealed class SmtpIdentityEmailSender(
         }
     }
 
-    public Task SendBookingConfirmationAsync(BookingConfirmedEvent evt, CancellationToken ct)
-    {
-        return SendEmailAsync(
-            evt.PatientEmail,
-            $"Booking confirmed - {evt.BookingNumber}",
-            string.Create(
-                CultureInfo.InvariantCulture,
-                $"Hi {WebUtility.HtmlEncode(evt.PatientFullName)}, your booking {WebUtility.HtmlEncode(evt.BookingNumber)} at {WebUtility.HtmlEncode(evt.ClinicName)} is confirmed for {evt.AppointmentStartUtc.UtcDateTime:yyyy-MM-dd HH:mm} UTC. Total: PHP {evt.TotalPrice:N2}."
-            ),
-            ct
-        );
-    }
-
-    // Same subject/body as SendConfirmationLinkAsync above - this is the background-delivery path
-    // for the identical email, used by registration instead of the synchronous IEmailSender<T> call.
-    public Task SendRegistrationConfirmationAsync(RegistrationConfirmationEvent evt, CancellationToken ct) =>
-        SendEmailAsync(
-            evt.Email,
-            "Confirm your email",
-            $"""Please confirm your Patient Booking account by <a href="{WebUtility.HtmlEncode(evt.ConfirmationLink)}">clicking here</a>""",
-            ct
-        );
-
-    private async Task SendEmailAsync(string toEmail, string subject, string htmlBody, CancellationToken ct = default)
+    // The actual transport - staged emails (booking/registration confirmation, and any future kind)
+    // reach this only through EmailDeliveryConsumer, never directly from a request. Composition
+    // (Subject/HtmlBody) is the caller's responsibility; this method only knows how to send.
+    public async Task SendAsync(
+        string toEmail,
+        string subject,
+        string htmlBody,
+        string? plainTextBody,
+        CancellationToken ct
+    )
     {
         EmailSettings settings = emailOptions.Value;
 
@@ -98,7 +89,13 @@ public sealed class SmtpIdentityEmailSender(
         message.From.Add(new MailboxAddress(settings.SenderName, settings.SenderEmail));
         message.To.Add(MailboxAddress.Parse(toEmail));
         message.Subject = subject;
-        message.Body = new TextPart(TextFormat.Html) { Text = htmlBody };
+        message.Body = string.IsNullOrEmpty(plainTextBody)
+            ? new TextPart(TextFormat.Html) { Text = htmlBody }
+            : new MultipartAlternative
+            {
+                new TextPart(TextFormat.Plain) { Text = plainTextBody },
+                new TextPart(TextFormat.Html) { Text = htmlBody },
+            };
 
         // SmtpClient here uses MimeKit
         using var client = new SmtpClient();

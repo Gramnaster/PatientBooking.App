@@ -185,8 +185,9 @@ workflow and distinguish verified local configuration from remote deployment ass
 
 For RabbitMQ, outbox, consumer retries, or background email work, read
 [RabbitMQ email delivery knowledge](.claude/knowledge/rabbitmq-email-delivery.md).
-Preserve its failure-handling lessons and distinguish booking notifications from the
-still-separate Identity email flows.
+Preserve its failure-handling lessons and distinguish the outbox-backed email flows
+(booking confirmation, registration confirmation) from the still-synchronous Identity
+email flows (resend confirmation, password reset, login notification).
 
 | Concern | Choice | Notes |
 |---|---|---|
@@ -194,7 +195,7 @@ still-separate Identity email flows.
 | Raw SQL | Dapper | Alongside EF Core in `Api.Application` — use for reporting/complex reads only, not CRUD |
 | Auth | JWT Bearer + ASP.NET Identity (EF Core store) + Google OAuth | `Microsoft.AspNetCore.Authentication.JwtBearer`, `Microsoft.AspNetCore.Identity.EntityFrameworkCore`, `Google.Apis.Auth`, `System.IdentityModel.Tokens.Jwt` |
 | Caching | `Microsoft.Extensions.Caching.Hybrid` (HybridCache) | Matches `performance.md` — use over `IMemoryCache` directly |
-| Messaging | `RabbitMQ.Client` (raw) | Booking transactional outbox, confirmed publishing, and consumer deduplication; see RabbitMQ knowledge above for guarantees and limits |
+| Messaging | `RabbitMQ.Client` (raw) | One shared transactional outbox/publisher/dispatcher/consumer pipeline (`EmailOutboxMessage` → `email-delivery` queue) delivers every background email kind — booking confirmation and registration confirmation compose their own content and stage it in their own transaction; adding another ordinary email type reuses the same pipeline. See RabbitMQ knowledge above for guarantees, limits, and the contributor example. |
 | Mapping | Riok.Mapperly (source generator) | Not AutoMapper — compile-time, no reflection |
 | Validation | FluentValidation | Per `error-handling.md` — validate at the API boundary |
 | Email | MailKit / MimeKit | |

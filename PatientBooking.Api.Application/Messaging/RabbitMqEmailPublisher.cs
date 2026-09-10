@@ -6,26 +6,26 @@ using RabbitMQ.Client;
 
 namespace PatientBooking.Api.Application.Messaging;
 
-public sealed class RabbitMqBookingEventPublisher(
+public sealed class RabbitMqEmailPublisher(
     RabbitMqConnectionProvider connectionProvider,
-    ILogger<RabbitMqBookingEventPublisher> logger
-) : IBookingEventPublisher
+    ILogger<RabbitMqEmailPublisher> logger
+) : IEmailEventPublisher
 {
-    public const string QueueName = "booking-confirmed";
-    public const string FailedQueueName = "booking-confirmed.failed";
-    public const string DeadLetterExchangeName = "booking-confirmed.dlx";
+    public const string QueueName = "email-delivery";
+    public const string FailedQueueName = "email-delivery.failed";
+    public const string DeadLetterExchangeName = "email-delivery.dlx";
 
     public static readonly ReadOnlyDictionary<string, object?> QueueArguments = new(new Dictionary<string, object?>(
         StringComparer.Ordinal
     )
     { ["x-queue-type"] = "quorum" });
 
-    public async Task<bool> PublishBookingConfirmedAsync(BookingConfirmedEvent evt, CancellationToken ct)
+    public async Task<bool> PublishEmailAsync(EmailEnvelope evt, CancellationToken ct)
     {
         IChannel? channel = await connectionProvider.TryOpenChannelAsync(ct, publisherConfirms: true);
         if (channel is null)
         {
-            logger.BookingConfirmedPublishSkipped(evt.BookingId);
+            logger.EmailPublishSkipped(evt.NotificationId);
             return false;
         }
 
@@ -38,7 +38,7 @@ public sealed class RabbitMqBookingEventPublisher(
             channel.BasicReturnAsync += (_, ea) =>
             {
                 returned = true;
-                logger.BookingConfirmedPublishReturned(evt.BookingId, ea.ReplyText);
+                logger.EmailPublishReturned(evt.NotificationId, ea.ReplyText);
                 return Task.CompletedTask;
             };
 
@@ -62,18 +62,17 @@ public sealed class RabbitMqBookingEventPublisher(
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                logger.BookingConfirmedPublishFailed(ex, evt.BookingId);
+                logger.EmailPublishFailed(ex, evt.NotificationId);
                 return false;
             }
         }
     }
 
-    // Declared defensively on every publish, same as the main queue always has been - cheap and
-    // idempotent. The failed queue only needs to exist; its retry/dead-letter behavior comes from a
-    // broker policy applied once via rabbitmqctl set_policy (see docs/deployment.md's RabbitMQ
-    // section), not from arguments on booking-confirmed itself. Deliberately not a definitions.json
-    // boot-time import - see .claude/knowledge/aspnet-dokploy-deployment.md for why that breaks
-    // default user/vhost seeding.
+    // Declared defensively on every publish - cheap and idempotent. The failed queue only needs to
+    // exist; its retry/dead-letter behavior comes from a broker policy applied once via rabbitmqctl
+    // set_policy (see docs/deployment.md's RabbitMQ section), not from arguments on email-delivery
+    // itself. Deliberately not a definitions.json boot-time import - see
+    // .claude/knowledge/aspnet-dokploy-deployment.md for why that breaks default user/vhost seeding.
     public static async Task DeclareTopologyAsync(IChannel channel, CancellationToken ct)
     {
         await channel.QueueDeclareAsync(

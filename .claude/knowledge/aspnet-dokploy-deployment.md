@@ -209,3 +209,20 @@ the exact management-UI replay procedure (get-message-then-republish, no Shovel 
 `docker/dev.compose.yaml`, `MessagingTestFixture.cs`) now pin `rabbitmq:4.3.4-management-alpine`
 explicitly, so deploy and tests stay on the exact version they were verified against until someone
 deliberately bumps it.
+
+### Booking and registration queues consolidated into `email-delivery` (2026-09-10)
+
+Everything above in this section describing `booking-confirmed`/`booking-confirmed.failed`
+described the state before this date - kept as-is since it documents real history (the
+`definitions.json` rejection reasoning, the loopback port-binding fix, the `at-least-once`
+dead-lettering addition all still apply unchanged). What changed: booking confirmation and
+patient-registration confirmation, previously two separate same-shaped pipelines, now share one
+queue pair (`email-delivery` / `email-delivery.failed`) instead of two (`booking-confirmed` /
+`registration-confirmation`, each with its own `.failed` queue). The policy name changed to
+`email-delivery-retry-limit`; the `at-least-once`/`overflow: reject-publish` reasoning and the
+manual (no Shovel plugin) replay procedure both carry over unchanged, just pointed at the new
+queue names. See
+[RabbitMQ email delivery knowledge](rabbitmq-email-delivery.md) for the full pipeline and
+[the deployment runbook](../../docs/deployment.md#one-time-migration-cutover-from-the-old-per-domain-pipelines-this-deploy-only)
+for the exact one-time cutover steps (drain both old outboxes/queues before deploying, apply the
+new policy, old tables retained as inert history). Not verified on the VPS - only locally.

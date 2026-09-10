@@ -7,99 +7,161 @@ email delivery.
 
 ## Evidence and scope
 
-- Source inspected on the review date: both publishers, both consumers, both
-  dispatchers, booking and user services, test project, Compose, and deployment
-  runbook.
-- Claude reported eight real-infrastructure tests passing against local SQL Server,
-  RabbitMQ, and smtp4dev, including a later-added test that blocks the failed queue with
-  a `max-length: 0`/`overflow: reject-publish` policy and confirms a message survives the
-  outage and eventually arrives once the policy is lifted. This knowledge-writing session
-  did not rerun them.
-- Local results do not verify the VPS, its effective broker policy, or its volumes.
-- Booking notifications and patient registration confirmation both use the outbox now
-  (separate tables/queues each - see below). Confirmation resend, password reset, and
-  login notifications are still traced separately and still send synchronously via
-  `SmtpIdentityEmailSender` - `UsersService.SendConfirmationEmailAsync` (used only by
-  `ResendConfirmationEmailAsync`), `SendPasswordResetCodeAsync`/`SendPasswordResetLinkAsync`,
-  and `SendLoginNotificationAsync` were deliberately left unchanged; only the
-  registration path (`EnqueueConfirmationEmailAsync`) was moved to the outbox.
+- Source inspected on the review date: the shared publisher/dispatcher/consumer, both
+  feature services (`BookingServices`, `UsersService`), the test project, Compose, and
+  the deployment runbook.
+- This session **consolidated** what was previously two separate, structurally
+  identical pipelines (booking confirmation and patient registration confirmation - each
+  with its own outbox, dedup table, publisher, dispatcher, consumer, queue, and broker
+  policy) into one shared pipeline. See "Current flow and ownership" below.
+- Confirmation resend, password reset, and login notifications are still traced
+  separately and still send synchronously via `SmtpIdentityEmailSender` -
+  `UsersService.SendConfirmationEmailAsync` (used only by `ResendConfirmationEmailAsync`),
+  `SendPasswordResetCodeAsync`/`SendPasswordResetLinkAsync`, and
+  `SendLoginNotificationAsync` were deliberately left unchanged; only booking and
+  registration confirmation go through the outbox.
 - **Employee registration (`EmployeeService.CreateEmployeeAsync`) sends no email at
   all today** - not synchronously, not through any outbox. This was true before this
-  change and is still true after it; the user explicitly deferred employee-invitation
-  email work to a follow-up session. Do not assume an employee outbox/consumer exists
-  yet - `RegistrationOutboxMessage`/`RegistrationConfirmationConsumer` currently serve
-  patient registration only, keyed by a `UserId` FK, not a role.
-- The user's intended outcome is background delivery for all email flows. That is a
-  requirement, not a claim that this implementation already covers every flow.
+  change and is still true after it; employee-invitation email work is explicitly out
+  of scope for this consolidation. Do not assume an employee email exists yet.
+- The user's intended outcome is background delivery for all email flows, with adding a
+  new ordinary email type requiring no new table, queue, dispatcher, or consumer. That
+  is a requirement, not a claim that every flow is on the outbox yet.
 
 ## Current flow and ownership
 
-### Booking confirmation
+One shared pipeline delivers every background-sent email kind (booking confirmation,
+registration confirmation, and any future kind):
 
-1. `BookingServices` saves the booking and `BookingOutboxMessage` in the same explicit
-   database transaction. It does not publish directly to RabbitMQ.
-2. `BookingOutboxDispatcher` polls pending rows every five seconds, up to 20 per batch.
-3. `RabbitMqBookingEventPublisher` opens a channel with publisher confirmations and
-   tracking enabled, publishes a persistent message with `mandatory: true`, and
-   accounts for returned/unroutable messages. Only a successful publish allows the
-   dispatcher to set `DispatchedAtUtc`.
-4. `BookingConfirmationConsumer` consumes `booking-confirmed` with manual
-   acknowledgements and prefetch 5. It checks `SentBookingNotifications`, sends through
-   `IBookingNotificationSender`, records the notification ID, then acknowledges.
-5. Malformed messages and exhausted retries go to `booking-confirmed.failed` through
-   `booking-confirmed.dlx`, subject to the deployed broker policy.
+1. A feature service (`BookingServices.EnqueueConfirmationAsync`,
+   `UsersService.EnqueueConfirmationEmailAsync`) **composes** the email - Subject and
+   HtmlBody, using its own domain data (a decrypted patient name, a confirmation link) -
+   and stages an `EmailOutboxMessage` row in the exact same database transaction as the
+   business operation it belongs to (the booking insert; the Identity user + Patient
+   row). The consumer never composes anything; composition is entirely the feature's
+   responsibility, matching "feature-specific code decides what the email says, shared
+   infrastructure decides how it gets delivered."
+2. `EmailOutboxDispatcher` polls pending `EmailOutboxMessages` every five seconds, up to
+   20 per batch, deserializes each row's `Payload` as an `EmailEnvelope`, and publishes
+   through `RabbitMqEmailPublisher`. A row that has passed its (optional) `ExpiresAtUtc`
+   before being dispatched is marked `ExpiredAtUtc` instead of published - it must never
+   be recorded as sent.
+3. `RabbitMqEmailPublisher` opens a channel with publisher confirmations and tracking
+   enabled, publishes a persistent message with `mandatory: true`, and accounts for
+   returned/unroutable messages. Only a successful publish allows the dispatcher to set
+   `DispatchedAtUtc`.
+4. `EmailDeliveryConsumer` consumes `email-delivery` with manual acknowledgements and
+   prefetch 5. It re-checks `ExpiresAtUtc` at send time too (a message can sit in the
+   queue through a broker/consumer outage), checks `SentEmailNotifications`, sends
+   through `IEmailTransportSender` (implemented by `SmtpIdentityEmailSender`), records
+   the notification ID, then acknowledges.
+5. Malformed messages and exhausted retries go to `email-delivery.failed` through
+   `email-delivery.dlx`, subject to the deployed broker policy.
 
-### Patient registration confirmation (added 2026-09-10)
+`EmailEnvelope` (`NotificationId`, `Recipient`, `Subject`, `HtmlBody`,
+`PlainTextBody?`, `CreatedAtUtc`, `ExpiresAtUtc?`, `Kind?`) is the one wire contract for
+every kind. `Kind` is diagnostic-only (a structured-log/query property, also
+denormalized onto `EmailOutboxMessage.Kind`) - the consumer never switches on it to
+rebuild per-feature logic, and it must stay that way. `EmailOutboxMessage` and
+`SentEmailNotification` carry no per-domain foreign key; `EmailOutboxMessage.Recipient`
+is the shared, non-domain-specific field used to look up "was this email queued" (by
+recipient, optionally combined with `Kind` when more than one email kind might target
+the same recipient).
 
-Same design, a separate, parallel pipeline rather than a shared/generalized one -
-booking's own components were left untouched on purpose (`RabbitMqConnectionProvider`
-was already queue-agnostic and is the one piece genuinely reused as-is):
+### What was removed in this consolidation
 
-1. `UsersService.RegisterAsync` saves the Identity user, `Patient` row, and a
-   `RegistrationOutboxMessage` in the same explicit transaction (`BeginTransactionAsync`
-   already wrapped `UserManager.CreateAsync` - confirmed its `SaveChangesAsync` calls
-   share the ambient transaction since `IdentityDbContext<ApplicationUser>` *is*
-   `PatientBookingDbContext`, the same scoped instance `UserManager` resolves). It
-   returns success only after `transaction.CommitAsync`, so broker/SMTP downtime cannot
-   fail registration. `ResendConfirmationEmailAsync` was deliberately left calling the
-   old synchronous path (`SendConfirmationEmailAsync`) - both share a new
-   `BuildConfirmationLinkAsync` helper for the identical token/link construction, so the
-   link format and token semantics are unchanged either way.
-2. `RegistrationOutboxDispatcher` polls pending `RegistrationOutboxMessages` every five
-   seconds, up to 20 per batch - identical polling/retry shape to
-   `BookingOutboxDispatcher`.
-3. `RabbitMqRegistrationEventPublisher` - same confirmed-publish/`mandatory:true`/
-   returned-message handling as `RabbitMqBookingEventPublisher`, publishing to
-   `registration-confirmation`.
-4. `RegistrationConfirmationConsumer` consumes `registration-confirmation` with manual
-   acknowledgements and prefetch 5, checks `SentRegistrationNotifications`, sends
-   through `IRegistrationNotificationSender` (implemented by `SmtpIdentityEmailSender`,
-   same subject/body as the synchronous `SendConfirmationLinkAsync`), records the
-   notification ID, then acknowledges. No legacy-message dedup-key derivation is needed
-   here (unlike booking's `DeriveLegacyDedupKey`) - `registration-confirmation` is a
-   brand new queue with no messages predating `NotificationId`.
-5. Malformed messages and exhausted retries go to `registration-confirmation.failed`
-   through `registration-confirmation.dlx`, subject to its own broker policy (separate
-   policy name/pattern from booking's - see the deployment runbook).
+Superseded by the shared pipeline above and deleted outright (not left "just in case"):
+`BookingOutboxMessage`/`RegistrationOutboxMessage`/`SentBookingNotification`/
+`SentRegistrationNotification` (Domain entities + configurations), `BookingConfirmedEvent`/
+`RegistrationConfirmationEvent` (wire records), `IBookingEventPublisher`/
+`IRegistrationEventPublisher`/`IBookingNotificationSender`/`IRegistrationNotificationSender`
+(contracts), `RabbitMqBookingEventPublisher`/`RabbitMqRegistrationEventPublisher`,
+`BookingOutboxDispatcher`/`RegistrationOutboxDispatcher`,
+`BookingConfirmationConsumer`/`RegistrationConfirmationConsumer` (plus every one of
+those files' `LoggerExtensions` companions), and `SmtpIdentityEmailSender`'s
+`SendBookingConfirmationAsync`/`SendRegistrationConfirmationAsync` methods (composition
+moved to the feature services). `RabbitMqConnectionProvider` was already queue-agnostic
+and needed no change - it's still the one piece genuinely reused as-is.
+
+Booking's own legacy-message dedup-key derivation (`TryResolveDedupKey`/
+`DeriveLegacyDedupKey`/`LegacyDedupNamespace`, needed because `booking-confirmed`
+predated `NotificationId` by about two hours - see git history around commit `3d7bf53`)
+was retired along with `booking-confirmed` itself. `email-delivery` is a brand-new
+queue with no messages predating `NotificationId`, so no equivalent logic exists in
+`EmailDeliveryConsumer` and none should be added preemptively.
+
+### Migrating existing data and queued messages (2026-09-10 consolidation, one-time)
+
+The old per-domain tables (`BookingOutboxMessages`, `RegistrationOutboxMessages`,
+`SentBookingNotifications`, `SentRegistrationNotifications`) are **not dropped** by the
+`ConsolidateEmailDelivery` migration - they are retained as inert historical/audit
+data. Nothing in the codebase reads or writes them after this migration. The migration
+copies every row from both old `Sent*Notifications` tables into the new
+`SentEmailNotifications` (matched by `Id`, idempotent) so a legacy notification ID that
+somehow gets replayed later is still recognized as already-sent. See
+[the deployment runbook](../../docs/deployment.md#one-time-migration-cutover-from-the-old-per-domain-pipelines-this-deploy-only)
+for the exact preflight checks (drain both old outboxes and queues to zero) and
+deployment sequencing this required - a documented maintenance-window cutover was
+chosen over a dual-running compatibility shim, since this is a solo, low-volume
+application and rolling-upgrade support would be meaningfully more complex than the
+traffic justifies. Do not reintroduce that complexity without a concrete need.
+
+### Contributor example: adding a new ordinary email type
+
+Adding, say, a "booking rescheduled" email should look like this and nothing more:
+
+```csharp
+// In the feature service, alongside its own business operation, inside its own
+// existing transaction:
+private static (string Subject, string HtmlBody) ComposeRescheduledEmail(GetBookingDto dto) =>
+    (
+        $"Booking rescheduled - {dto.BookingNumber}",
+        $"""Hi {WebUtility.HtmlEncode(dto.PatientFullName)}, your booking has moved to a new time."""
+    );
+
+private async Task EnqueueRescheduledEmailAsync(string patientEmail, GetBookingDto dto, CancellationToken ct)
+{
+    (string subject, string htmlBody) = ComposeRescheduledEmail(dto);
+    EmailEnvelope evt = new(
+        Guid.CreateVersion7(), patientEmail, subject, htmlBody,
+        PlainTextBody: null, clock.GetUtcNow(), ExpiresAtUtc: null, Kind: "BookingRescheduled"
+    );
+
+    await patientBookingDbContext.AddAsync(new EmailOutboxMessage
+    {
+        Id = evt.NotificationId,
+        Recipient = patientEmail,
+        Kind = evt.Kind,
+        Payload = JsonSerializer.Serialize(evt),
+        CreatedAtUtc = clock.GetUtcNow(),
+    }, ct);
+}
+```
+
+Then add a focused test proving the new composition (readable names, correct HTML
+encoding, staged in the same transaction) - the shared transport/dedup/retry/dead-letter
+behavior is already covered by `EmailDeliveryConsumerTests` and needs no new coverage
+per email type. No new table, migration, dispatcher, publisher, consumer, or queue
+policy is needed.
 
 Source locations (relative to the repository root):
 
 - `PatientBooking.Api.Application/Services/BookingServices.cs`
 - `PatientBooking.Api.Application/Services/UsersService.cs`
-- `PatientBooking.Api.Application/Messaging/BookingConfirmedEvent.cs`
-- `PatientBooking.Api.Application/Messaging/RegistrationConfirmationEvent.cs`
-- `PatientBooking.Api.Application/Messaging/RabbitMqBookingEventPublisher.cs`
-- `PatientBooking.Api.Application/Messaging/RabbitMqRegistrationEventPublisher.cs`
+- `PatientBooking.Api.Application/Services/SmtpIdentityEmailSender.cs`
+- `PatientBooking.Api.Application/Messaging/EmailEnvelope.cs`
+- `PatientBooking.Api.Application/Messaging/RabbitMqEmailPublisher.cs`
 - `PatientBooking.Api.Application/Messaging/RabbitMqConnectionProvider.cs`
-- `PatientBooking.Api/BackgroundServices/BookingOutboxDispatcher.cs`
-- `PatientBooking.Api/BackgroundServices/BookingConfirmationConsumer.cs`
-- `PatientBooking.Api/BackgroundServices/RegistrationOutboxDispatcher.cs`
-- `PatientBooking.Api/BackgroundServices/RegistrationConfirmationConsumer.cs`
-- `PatientBooking.Api.Domain/RegistrationOutboxMessage.cs`,
-  `PatientBooking.Api.Domain/SentRegistrationNotification.cs`
-- `PatientBooking.Api.Tests/BookingConfirmationConsumerTests.cs`
-- `PatientBooking.Api.Tests/RegistrationConfirmationConsumerTests.cs`
+- `PatientBooking.Api.Application/Contracts/IEmailEventPublisher.cs`
+- `PatientBooking.Api.Application/Contracts/IEmailTransportSender.cs`
+- `PatientBooking.Api/BackgroundServices/EmailOutboxDispatcher.cs`
+- `PatientBooking.Api/BackgroundServices/EmailDeliveryConsumer.cs`
+- `PatientBooking.Api.Domain/EmailOutboxMessage.cs`,
+  `PatientBooking.Api.Domain/SentEmailNotification.cs`
+- `PatientBooking.Api.Domain/Migrations/20260910135147_ConsolidateEmailDelivery.cs`
+- `PatientBooking.Api.Tests/EmailDeliveryConsumerTests.cs`
 - `PatientBooking.Api.Tests/PatientRegistrationEndpointTests.cs`
+- `PatientBooking.Api.Tests/BookingConfirmationEmailEndpointTests.cs`
 - `PatientBooking.Api.Tests/Infrastructure/MessagingTestFixture.cs`
 - `PatientBooking.Api.Tests/Infrastructure/BookingEndpointTestFixture.cs`
 
@@ -115,10 +177,11 @@ promise of any particular API response time. See Microsoft's
 |---|---|
 | SQL fails before SMTP | Scope resolution and dedup lookup belong inside the delivery try/catch. An escaping exception can leave deliveries unacknowledged and fill all five prefetch slots. |
 | Saving the sent record fails | Do not acknowledge every `DbUpdateException` as a duplicate. Current SQL Server classification accepts only inner `SqlException` numbers 2627/2601 in the dedup insert scope. Other failures retry. Revisit classification if that save gains other writes. |
-| Legacy event has no notification ID | Never use `Guid.Empty` as a shared dedup key. Current compatibility code derives a stable, namespaced SHA-256 key from `BookingId`. Preserve that algorithm for persisted old messages. It assumes one confirmation event per booking. |
+| An envelope expires before it is sent | Check `ExpiresAtUtc` both at dispatch time (dispatcher) and at send time (consumer) - a message can sit queued through an outage. Mark it abandoned/ack it without ever recording `SentEmailNotifications`. Never invent an unrelated timeout; align it to the actual token/data lifetime that made expiry meaningful in the first place. |
 | Required payload fields are missing | Reject without requeue; retries cannot repair malformed input. |
 | Broker cancels a consumer without disconnecting | `UnregisteredAsync` wakes the outer loop to redeclare topology and consume again. Connection recovery alone does not cover every cancellation scenario. |
-| Broker is unavailable during booking | Commit the outbox with the booking; let the dispatcher retry. Do not restore a synchronous broker dependency to booking creation. |
+| Broker is unavailable during booking or registration | Commit the outbox with the business operation; let the dispatcher retry. Do not restore a synchronous broker dependency to either request. |
+| Consolidating two pipelines into one | Do not silently drop the old tables/queues' data. Copy dedup records forward; retain old tables as inert history; require an explicit drain-and-verify preflight before cutover instead of inventing dual-running compatibility code this app's scale doesn't need. |
 
 For RabbitMQ 4.3 behavior, explicit `basic.nack(requeue: true)` does not increment the
 quorum delivery counter. The current retry path uses `BasicRejectAsync(requeue: true)`
@@ -128,10 +191,10 @@ dead-lettering of malformed input. Verify semantics against the actual broker ve
 [quorum poison-message handling](https://www.rabbitmq.com/docs/quorum-queues#poison-message-handling).
 
 The earlier local verification reported RabbitMQ 4.3.4. `docker-compose.yml`,
-`docker/dev.compose.yaml`, and `MessagingTestFixture.cs` now pin `rabbitmq:4.3.4-management-alpine`
+`docker/dev.compose.yaml`, and `MessagingTestFixture.cs` pin `rabbitmq:4.3.4-management-alpine`
 instead of the floating `4-management-alpine` tag, after that floating tag was observed
-moving to 4.3.5 mid-development of this test suite. Bump the pin in all three places
-together, deliberately, rather than re-pulling the floating tag.
+moving to 4.3.5 mid-development of an earlier test suite. Bump the pin in all three
+places together, deliberately, rather than re-pulling the floating tag.
 
 ## Delivery guarantees and limits
 
@@ -146,20 +209,39 @@ together, deliberately, rather than re-pulling the floating tag.
   sending cannot undo either email.
 - A prolonged SQL or SMTP outage can exhaust retries and send messages to the failed
   queue. Restoring the dependency does not automatically replay that queue in this app.
-  A bounded, non-destructive replay procedure is now documented in the deployment
-  runbook: peek with requeue enabled, republish, confirm the `SentBookingNotifications`
-  row by `notificationId` before removing the original. It has not been exercised against
-  a real failed message. Preserve IDs when replaying and acknowledge the possibility of
-  duplicate email after an ambiguous send.
+  A bounded, non-destructive replay procedure is documented in the deployment runbook:
+  peek with requeue enabled, republish, confirm the `SentEmailNotifications` row by
+  `notificationId` before removing the original. It has not been exercised against a
+  real failed message on a live deployment. Preserve IDs when replaying and acknowledge
+  the possibility of duplicate email after an ambiguous send.
 - Review coordination before scaling API replicas: each instance hosts workers, and
   the current dispatcher does not claim rows with a distributed lease.
+
+## Sensitive content and retention
+
+- Never log confirmation tokens, full email bodies, or full envelope payloads. The
+  consumer's log statements carry only `NotificationId` and, on failure, the caught
+  exception - never `Recipient`, `Subject`, or `HtmlBody`.
+- Never include a password in `EmailEnvelope` or any composed email.
+- `EmailOutboxMessage.Payload` persists the full rendered HTML (including, for
+  registration, the confirmation link) until dispatched; it is not purged after
+  dispatch today. This matches the prior per-domain outboxes' behavior - no new
+  retention policy was introduced or removed by this consolidation. If retention
+  becomes a requirement, treat it as its own scoped follow-up rather than folding it
+  into a future unrelated change.
+- Registration's confirmation-link expiry (`EmailEnvelope.ExpiresAtUtc`) is aligned to
+  ASP.NET Core Identity's default `DataProtectionTokenProviderOptions.TokenLifespan`
+  (1 day) via `UsersService.ConfirmationLinkLifespan` - not an arbitrary timeout. If
+  that Identity default is ever configured explicitly in `Program.cs`, update the
+  constant to match, or the queued email's expiry and the token's actual validity will
+  drift apart.
 
 ## Deployment decisions
 
 Use the [deployment runbook](../../docs/deployment.md#rabbitmq) for exact commands.
 Keep command maintenance there rather than copying a second runsheet into this file.
 
-- Both queues are durable quorum queues. Mutable retry/DLX settings are broker policy,
+- The queue is a durable quorum queue. Mutable retry/DLX settings are broker policy,
   avoiding incompatible hardcoded queue-argument redeclarations.
 - The policy sets delivery limit 3, the DLX/routing key, `dead-letter-strategy:
   at-least-once`, and `overflow: reject-publish`. Verify the effective policy and required
@@ -211,29 +293,73 @@ Commands: [existing-broker account setup](../../docs/deployment.md#existing-brok
 
 ## Verification lessons and remaining checks
 
-The eight checked-in tests cover outbox dispatch, duplicate redelivery, recovery after
-a short SQL outage with five messages, duplicate-key exception classification, legacy
-deduplication, missing required fields, permanent SMTP failure dead-lettering, and the
-dead-letter destination becoming unavailable and then recovering (message survives the
-outage and eventually reaches `booking-confirmed.failed`). The exception classification
-test performs successive inserts with two contexts; it does not prove concurrent
-full-pipeline behavior. Do not describe every test as an HTTP end-to-end test: these
-tests also exercise workers directly.
+Local test coverage after the 2026-09-10 consolidation: one shared-infrastructure suite
+(`EmailDeliveryConsumerTests`) covering outbox dispatch, duplicate redelivery, recovery
+after a short SQL outage with five messages, duplicate-key exception classification,
+missing-field dead-lettering, permanent SMTP-failure dead-lettering, dead-letter
+destination outage/recovery, and envelope expiry - exercised once, generically, rather
+than once per email kind. Feature-specific composition (readable/encoded names, correct
+subject lines, registration link semantics and expiry, no-SMTP-in-request timing) is
+covered separately by `PatientRegistrationEndpointTests` and
+`BookingConfirmationEmailEndpointTests`. Booking's prior legacy-message dedup test has
+no equivalent here - `email-delivery` is a brand-new queue with no pre-`NotificationId`
+messages, so there is nothing to reproduce.
+
+**Root cause found and fixed - and the first fix attempt was wrong, corrected here rather
+than left standing:** the previously-flaky "dead-letter destination unavailable then
+recovers" test was first suspected to be racing RabbitMQ's own policy-application
+latency (`PUT /api/policies/...` returning success before the broker attaches the policy
+to the target queue). A fix polling the queue's `effective_policy_definition` until it
+reflected the blocking policy was written and *believed* to resolve it, but retesting
+showed the same failure with the policy confirmed attached - so that hypothesis was
+wrong, not merely incomplete.
+
+The actual root cause is a genuine, currently-unfixed RabbitMQ server behavior: the
+internal publisher used for at-least-once dead-lettering ignores `overflow:
+reject-publish` on the *target* queue and keeps enqueueing past its `max-length` limit -
+confirmed by RabbitMQ's own issue tracker
+(https://github.com/rabbitmq/rabbitmq-server/issues/8495, opened 2023, still open at time
+of writing). The quorum-queues doc page's own prose ("dead-lettered messages have to
+contribute to the queue resource limits...so the queue can refuse to accept more
+messages") describes the *intended* behavior, which does not match what the broker
+actually does for this delivery path. This is a broker limitation, not an application bug
+and not a test-synchronization bug - `EmailDeliveryConsumer` needed no changes.
+
+The fix: stop trying to block the destination queue via an overflow policy at all.
+`MessagingTestFixture.BlockFailedQueueAsync` now deletes the `email-delivery.failed`
+queue outright, which removes the DLX route entirely - the documented mechanism for an
+unavailable dead-letter target
+(https://www.rabbitmq.com/blog/2022/03/29/at-least-once-dead-lettering): a message with
+no route is retained by the source queue in a "neither ready nor unacknowledged" state
+and retried by an internal dead-letter consumer process on a fixed schedule, currently
+every 3 minutes, which is not exposed as a policy setting. `UnblockFailedQueueAsync`
+redeclares (and rebinds) the queue to restore the route. Because that retry interval is
+real and not configurable, the recovery half of this test now waits up to 4 minutes
+instead of 30 seconds - a widened timeout, but one backed by a cited broker interval and
+a corrected blocking mechanism, not a blind pad over an unexplained flake.
 
 Reported harness lessons: under the selected xUnit v3/Microsoft.Testing.Platform runner,
-Claude used `--parallel none`; do not assume a copied runner JSON file enforces the
-desired execution mode. Verify the active runner's help/configuration when changing it.
-The fixture also applies exact recipient matching after smtp4dev's substring-based
-`deliveredTo` filter. Preserve that check to avoid false duplicate-email failures.
+`dotnet test` fails outright on the .NET 10 SDK ("Testing with VSTest target is no
+longer supported"); build the test project and run the produced `.exe` directly, with
+`--filter-query "/*/*/<ClassName>/*"` to scope to one class (the filter-query language
+does not accept `|` for OR - run one filtered invocation per class, or omit the filter
+for the full suite). `xunit.runner.json` already enforces sequential execution
+project-wide. The fixture also applies exact recipient matching after smtp4dev's
+substring-based `deliveredTo` filter. Preserve that check to avoid false
+duplicate-email failures.
 
 Still unverified by the reported suite:
 
 1. SQL outage long enough to exhaust retries is confirmed by source inspection (no
-   hosted service reads `booking-confirmed.failed`) and its replay procedure is now
+   hosted service reads `email-delivery.failed`) and its replay procedure is
    documented, but the procedure itself has not been exercised against a real failed
    message.
 2. Genuine concurrent duplicate-key race through the complete send/persist pipeline.
 3. Effective policy, port binding, migrations, and notification delivery on the VPS.
+4. The migration's data-carry-forward SQL (`INSERT ... SELECT ... WHERE NOT EXISTS`)
+   against production-shaped `SentBookingNotifications`/`SentRegistrationNotifications`
+   data - verified locally against whatever rows existed in the dev database at
+   migration time, not against a VPS backup.
 
 Keep tests isolated from normal development data and real recipients. When PostgreSQL
 replaces SQL Server, preserve the delivery design but replace provider-specific error

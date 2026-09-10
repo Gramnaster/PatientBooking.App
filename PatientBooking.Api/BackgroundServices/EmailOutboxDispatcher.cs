@@ -6,14 +6,16 @@ using PatientBooking.Api.Domain;
 
 namespace PatientBooking.Api.BackgroundServices;
 
-// Relays RegistrationOutboxMessage rows (written transactionally alongside the account they belong
-// to - see UsersService.EnqueueConfirmationEmailAsync) to RabbitMQ. A row is marked dispatched only
-// once the publish is broker-confirmed; anything else - broker down, nack, unroutable - is retried
-// on the next tick. Mirrors BookingOutboxDispatcher's polling/retry design.
-public sealed class RegistrationOutboxDispatcher(
+// Relays EmailOutboxMessage rows (written transactionally alongside the business operation they
+// belong to - see BookingServices.EnqueueConfirmationAsync / UsersService.EnqueueConfirmationEmailAsync)
+// to RabbitMQ. A row is marked dispatched only once the publish is broker-confirmed; anything else -
+// broker down, nack, unroutable - is retried on the next tick. No per-row backoff: at this message
+// volume, retrying an undispatched row every 5s while the broker is down isn't a hot loop, and
+// tracking per-row backoff is complexity this app doesn't need yet.
+public sealed class EmailOutboxDispatcher(
     IServiceScopeFactory scopeFactory,
     TimeProvider clock,
-    ILogger<RegistrationOutboxDispatcher> logger
+    ILogger<EmailOutboxDispatcher> logger
 ) : BackgroundService
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
@@ -30,7 +32,7 @@ public sealed class RegistrationOutboxDispatcher(
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                logger.RegistrationOutboxDispatchLoopFailed(ex);
+                logger.EmailOutboxDispatchLoopFailed(ex);
             }
         }
         while (await timer.WaitForNextTickAsync(stoppingToken));
@@ -40,25 +42,27 @@ public sealed class RegistrationOutboxDispatcher(
     {
         await using AsyncServiceScope scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<PatientBookingDbContext>();
-        var publisher = scope.ServiceProvider.GetRequiredService<IRegistrationEventPublisher>();
+        var publisher = scope.ServiceProvider.GetRequiredService<IEmailEventPublisher>();
 
-        List<RegistrationOutboxMessage> pending = await db
-            .RegistrationOutboxMessages
-            .Where(m => m.DispatchedAtUtc == null)
+        List<EmailOutboxMessage> pending = await db
+            .EmailOutboxMessages
+            .Where(m => m.DispatchedAtUtc == null && m.ExpiredAtUtc == null)
             .OrderBy(m => m.CreatedAtUtc)
             .Take(BatchSize)
             .ToListAsync(ct);
 
-        foreach (RegistrationOutboxMessage message in pending)
+        DateTimeOffset now = clock.GetUtcNow();
+
+        foreach (EmailOutboxMessage message in pending)
         {
-            RegistrationConfirmationEvent? evt;
+            EmailEnvelope? evt;
             try
             {
-                evt = JsonSerializer.Deserialize<RegistrationConfirmationEvent>(message.Payload);
+                evt = JsonSerializer.Deserialize<EmailEnvelope>(message.Payload);
             }
             catch (JsonException ex)
             {
-                logger.RegistrationOutboxMessageMalformed(ex, message.Id);
+                logger.EmailOutboxMessageMalformed(ex, message.Id);
                 message.DispatchAttempts++;
                 message.LastError = ex.Message;
                 continue;
@@ -71,12 +75,23 @@ public sealed class RegistrationOutboxDispatcher(
                 continue;
             }
 
-            bool published = await publisher.PublishRegistrationConfirmationAsync(evt, ct);
+            // An expired envelope must never be recorded as sent - mark it abandoned instead of
+            // publishing, and stop it from being polled again (ExpiredAtUtc joins DispatchedAtUtc in
+            // the WHERE clause above).
+            if (evt.ExpiresAtUtc is { } expiresAtUtc && expiresAtUtc <= now)
+            {
+                logger.EmailOutboxMessageExpired(message.Id);
+                message.ExpiredAtUtc = now;
+                message.LastError = "Expired before dispatch.";
+                continue;
+            }
+
+            bool published = await publisher.PublishEmailAsync(evt, ct);
             message.DispatchAttempts++;
 
             if (published)
             {
-                message.DispatchedAtUtc = clock.GetUtcNow();
+                message.DispatchedAtUtc = now;
                 message.LastError = null;
             }
             else

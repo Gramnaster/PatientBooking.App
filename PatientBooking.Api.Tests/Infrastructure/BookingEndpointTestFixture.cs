@@ -104,6 +104,21 @@ public sealed class BookingEndpointTestFixture : WebApplicationFactory<Program>,
         CancellationToken ct
     )
     {
+        (HttpClient client, string userId, string _) = await CreatePatientClientWithEmailAsync(firstName, lastName, ct);
+        return (client, userId);
+    }
+
+    // Same as CreatePatientClientAsync, but also returns the plaintext email address. Email is
+    // personal-data-protected at rest (see ApplicationUserConfiguration) - a raw-context query
+    // through PassthroughPersonalDataProtector would read back ciphertext, not the address the API
+    // actually used, so a test that needs to correlate against it (e.g. an outbox row's Recipient)
+    // must capture it here, from the registration response, rather than re-reading it from storage.
+    public async Task<(HttpClient Client, string UserId, string Email)> CreatePatientClientWithEmailAsync(
+        string firstName,
+        string lastName,
+        CancellationToken ct
+    )
+    {
         HttpClient client = CreateClient();
         string email = $"{Guid.NewGuid():N}@patientbooking.test";
 
@@ -133,7 +148,7 @@ public sealed class BookingEndpointTestFixture : WebApplicationFactory<Program>,
         LoginResponseDto login = (await loginResponse.Content.ReadFromJsonAsync<LoginResponseDto>(ct))!;
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login.Token);
-        return (client, registered.Id);
+        return (client, registered.Id, email);
     }
 
     // A fresh DbContext against the same container - used only for raw scalar SQL reads (bypassing

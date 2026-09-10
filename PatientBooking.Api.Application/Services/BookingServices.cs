@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
@@ -363,7 +364,7 @@ public sealed class BookingServices(
 
             if (!string.IsNullOrWhiteSpace(patientEmail))
             {
-                await EnqueueConfirmationAsync(booking.Id, patientEmail, created, ct);
+                await EnqueueConfirmationAsync(patientEmail, created, ct);
                 await patientBookingDbContext.SaveChangesAsync(ct);
             }
 
@@ -374,34 +375,42 @@ public sealed class BookingServices(
         return Result<GetBookingDto>.Conflict("This appointment slot is no longer available.");
     }
 
-    private async Task EnqueueConfirmationAsync(
-        int bookingId,
-        string patientEmail,
-        GetBookingDto bookingDto,
-        CancellationToken ct
-    )
+    private async Task EnqueueConfirmationAsync(string patientEmail, GetBookingDto bookingDto, CancellationToken ct)
     {
-        BookingConfirmedEvent evt = new(
+        (string subject, string htmlBody) = ComposeConfirmationEmail(bookingDto);
+
+        // Never expires - purely informational, no token whose validity window matters.
+        EmailEnvelope evt = new(
             Guid.CreateVersion7(),
-            bookingId,
-            bookingDto.BookingNumber,
             patientEmail,
-            bookingDto.PatientFullName,
-            bookingDto.ClinicName,
-            bookingDto.AppointmentStartUtc,
-            bookingDto.TotalPrice
+            subject,
+            htmlBody,
+            PlainTextBody: null,
+            clock.GetUtcNow(),
+            ExpiresAtUtc: null,
+            Kind: "BookingConfirmation"
         );
 
-        BookingOutboxMessage outboxMessage = new()
+        EmailOutboxMessage outboxMessage = new()
         {
             Id = evt.NotificationId,
-            BookingId = bookingId,
+            Recipient = patientEmail,
+            Kind = evt.Kind,
             Payload = JsonSerializer.Serialize(evt),
             CreatedAtUtc = clock.GetUtcNow(),
         };
 
         await patientBookingDbContext.AddAsync(outboxMessage, ct);
     }
+
+    // Same subject/body a booking confirmation has always had - only the composition point moved,
+    // from SmtpIdentityEmailSender (post-dequeue) to here (pre-stage), so the shared consumer never
+    // needs booking-specific formatting knowledge.
+    private static (string Subject, string HtmlBody) ComposeConfirmationEmail(GetBookingDto bookingDto) =>
+        ($"Booking confirmed - {bookingDto.BookingNumber}", string.Create(
+            CultureInfo.InvariantCulture,
+            $"Hi {WebUtility.HtmlEncode(bookingDto.PatientFullName)}, your booking {WebUtility.HtmlEncode(bookingDto.BookingNumber)} at {WebUtility.HtmlEncode(bookingDto.ClinicName)} is confirmed for {bookingDto.AppointmentStartUtc.UtcDateTime:yyyy-MM-dd HH:mm} UTC. Total: PHP {bookingDto.TotalPrice:N2}."
+        ));
 
     async Task<Result<GetBookingDto>> IBookingService.GetByIdForClinicAsync(
         int clinicId,

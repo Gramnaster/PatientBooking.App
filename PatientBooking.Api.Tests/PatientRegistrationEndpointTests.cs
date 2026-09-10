@@ -1,18 +1,21 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using PatientBooking.Api.Application.DTOs.Auth;
+using PatientBooking.Api.Application.Messaging;
 using PatientBooking.Api.Domain;
 using PatientBooking.Api.Tests.Infrastructure;
 using Xunit;
 
 namespace PatientBooking.Api.Tests;
 
-// Endpoint-level regression tests for the 2026-09-10 registration background-delivery change:
-// UsersService.RegisterAsync used to await SmtpIdentityEmailSender.SendConfirmationLinkAsync (real
-// SMTP) inside its own transaction before returning. It now queues a RegistrationOutboxMessage in
-// that same transaction instead. Real HTTP pipeline, real SQL Server, real Identity throughout.
+// Endpoint-level regression tests for registration background-delivery: UsersService.RegisterAsync
+// stages an EmailOutboxMessage in the same transaction instead of awaiting SMTP, and composes the
+// confirmation email itself (EmailDeliveryConsumerTests covers the shared transport/dedup/retry
+// pipeline generically - this file only proves registration's own composition and transaction
+// boundary). Real HTTP pipeline, real SQL Server, real Identity throughout.
 [Collection(BookingEndpointCollection.Name)]
 public sealed class PatientRegistrationEndpointTests(BookingEndpointTestFixture fixture)
 {
@@ -42,19 +45,38 @@ public sealed class PatientRegistrationEndpointTests(BookingEndpointTestFixture 
 
         // Reported, not asserted against a fixed budget - SMTP round-trips run from seconds to
         // tens-of-seconds under real hosts, so a hard threshold here would be a flaky guess. The
-        // point this proves structurally is the next assertion: no outbox row means no email was
-        // ever queued, which is only possible if the request never touched SMTP at all.
+        // point this proves structurally is the next assertion: no dispatched outbox row means no
+        // email was ever queued for send, which is only possible if the request never touched SMTP.
         Console.WriteLine($"POST /api/Auth/register completed in {stopwatch.ElapsedMilliseconds}ms.");
 
         await using PatientBookingDbContext db = fixture.CreateRawDbContext();
-        RegistrationOutboxMessage? outboxRow = await db
-            .RegistrationOutboxMessages
-            .SingleOrDefaultAsync(m => m.UserId == registered.Id, ct);
+        // EmailOutboxMessage carries no per-domain foreign key (shared across every email kind), so a
+        // registration's own row is found by the recipient address instead of a UserId column.
+        EmailOutboxMessage? outboxRow = await db
+            .EmailOutboxMessages
+            .SingleOrDefaultAsync(m => m.Recipient == email, ct);
 
         Assert.NotNull(outboxRow);
         // Not yet picked up by the dispatcher (which polls every 5s) - proves the row was written by
         // the request itself, transactionally, rather than by some background process racing us.
         Assert.Null(outboxRow.DispatchedAtUtc);
+
+        EmailEnvelope envelope = JsonSerializer.Deserialize<EmailEnvelope>(outboxRow.Payload)!;
+        Assert.Equal(email, envelope.Recipient);
+        Assert.Equal("Confirm your email", envelope.Subject);
+        Assert.Equal("RegistrationConfirmation", envelope.Kind);
+        Assert.Contains("/api/auth/confirm-email?userId=", envelope.HtmlBody, StringComparison.Ordinal);
+        Assert.Contains(Uri.EscapeDataString(registered.Id), envelope.HtmlBody, StringComparison.Ordinal);
+
+        // Registration links retain their existing semantics: aligned to the same lifespan as the
+        // Identity email-confirmation token itself (ASP.NET Core's default is 1 day), not an
+        // arbitrary unrelated timeout.
+        Assert.NotNull(envelope.ExpiresAtUtc);
+        Assert.InRange(
+            envelope.ExpiresAtUtc!.Value - envelope.CreatedAtUtc,
+            TimeSpan.FromHours(23),
+            TimeSpan.FromHours(25)
+        );
     }
 
     [Fact]
@@ -95,9 +117,9 @@ public sealed class PatientRegistrationEndpointTests(BookingEndpointTestFixture 
         int accountsWithThisId = await db.Users.CountAsync(u => u.Id == firstRegistered.Id, ct);
         Assert.Equal(1, accountsWithThisId);
 
-        int outboxRowsForThisUser = await db
-            .RegistrationOutboxMessages
-            .CountAsync(m => m.UserId == firstRegistered.Id, ct);
-        Assert.Equal(1, outboxRowsForThisUser);
+        int outboxRowsForThisRecipient = await db
+            .EmailOutboxMessages
+            .CountAsync(m => m.Recipient == email, ct);
+        Assert.Equal(1, outboxRowsForThisRecipient);
     }
 }

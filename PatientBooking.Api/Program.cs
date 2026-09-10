@@ -210,17 +210,10 @@ try
     builder.Services.Configure<RabbitMqSettings>(builder.Configuration.GetSection("RabbitMq"));
 
     builder.Services.AddSingleton<RabbitMqConnectionProvider>();
-    builder.Services.AddSingleton<IBookingEventPublisher, RabbitMqBookingEventPublisher>();
-    builder.Services.AddSingleton<IBookingNotificationSender>(sp => sp.GetRequiredService<SmtpIdentityEmailSender>());
-    builder.Services.AddHostedService<BookingConfirmationConsumer>();
-    builder.Services.AddHostedService<BookingOutboxDispatcher>();
-
-    builder.Services.AddSingleton<IRegistrationEventPublisher, RabbitMqRegistrationEventPublisher>();
-    builder.Services.AddSingleton<IRegistrationNotificationSender>(
-        sp => sp.GetRequiredService<SmtpIdentityEmailSender>()
-    );
-    builder.Services.AddHostedService<RegistrationConfirmationConsumer>();
-    builder.Services.AddHostedService<RegistrationOutboxDispatcher>();
+    builder.Services.AddSingleton<IEmailEventPublisher, RabbitMqEmailPublisher>();
+    builder.Services.AddSingleton<IEmailTransportSender>(sp => sp.GetRequiredService<SmtpIdentityEmailSender>());
+    builder.Services.AddHostedService<EmailDeliveryConsumer>();
+    builder.Services.AddHostedService<EmailOutboxDispatcher>();
 
     // Data Protection's own key ring, persisted to disk so okeys survive app restarts
     var dataProtectionKeyPath = builder.Configuration["DataProtection:KeyPath"];

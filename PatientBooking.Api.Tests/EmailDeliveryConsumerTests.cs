@@ -11,55 +11,37 @@ using Xunit;
 
 namespace PatientBooking.Api.Tests;
 
-// Regression tests for the 2026-09-10 booking-confirmation consumer review findings:
-// unhandled-DB-exception stalls, broad DbUpdateException-as-duplicate handling, legacy
-// (pre-NotificationId) messages, and dead-letter/retry-exhaustion behavior under the updated
-// at-least-once policy. Real SQL Server, real RabbitMQ (same image as prod), real SMTP via
-// smtp4dev - no mocks for infrastructure this project owns or depends on.
+// Shared-infrastructure regression tests for background email delivery: one outbox, one queue, one
+// consumer for every email kind (booking confirmation, registration confirmation, and any future
+// kind) - covers confirmed publishing, manual acks, duplicate redelivery, SQL-outage recovery,
+// malformed-message and retry-exhaustion dead-lettering, dead-letter-destination outage/recovery,
+// and expiry. Feature-specific composition (what a booking or registration email actually says) is
+// covered separately by BookingCancellationEndpointTests/PatientRegistrationEndpointTests - this
+// file only exercises the transport pipeline through generic envelopes, so no email type inherits a
+// copy of this whole suite just to gain delivery-reliability coverage.
+// Real SQL Server, real RabbitMQ (same image as prod), real SMTP via smtp4dev - no mocks for
+// infrastructure this project owns or depends on.
 [Collection(MessagingCollection.Name)]
-public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixture)
+public sealed class EmailDeliveryConsumerTests(MessagingTestFixture fixture)
 {
     private static readonly TimeProvider Clock = TimeProvider.System;
 
-    // Matches the pre-commit-3d7bf53 shape of BookingConfirmedEvent exactly (verified via
-    // `git show 7a72b6a -- .../BookingConfirmedEvent.cs`) - no NotificationId field at all, not
-    // just a null one, so deserializing this into today's record leaves NotificationId as
-    // Guid.Empty, exactly reproducing what a message from that window looks like today.
-    private sealed record LegacyBookingConfirmedEvent(
-        int BookingId,
-        string BookingNumber,
-        string PatientEmail,
-        string PatientFullName,
-        string ClinicName,
-        DateTimeOffset AppointmentStartUtc,
-        decimal TotalPrice
-    );
-
     [Fact]
-    public async Task EnqueueConfirmationAsync_ValidBooking_DispatchesAndSendsOneEmail()
+    public async Task EnqueueEmailAsync_ValidOutboxRow_DispatchesAndSendsOneEmail()
     {
         using CancellationTokenSource cts = new(TimeSpan.FromSeconds(90));
         CancellationToken ct = cts.Token;
 
-        (Booking booking, string patientEmail) = await SeedBookingAsync(ct);
-        BookingConfirmedEvent evt = new(
-            Guid.CreateVersion7(),
-            booking.Id,
-            booking.BookingNumber,
-            patientEmail,
-            "Test Patient",
-            "Test Clinic",
-            booking.AppointmentStartUtc,
-            100.00m
-        );
+        string email = UniqueEmail();
+        EmailEnvelope evt = BuildEvent(email);
 
         await using (PatientBookingDbContext db = fixture.CreateRawDbContext())
         {
-            db.BookingOutboxMessages.Add(
-                new BookingOutboxMessage
+            db.EmailOutboxMessages.Add(
+                new EmailOutboxMessage
                 {
                     Id = evt.NotificationId,
-                    BookingId = booking.Id,
+                    Recipient = evt.Recipient,
                     Payload = JsonSerializer.Serialize(evt),
                     CreatedAtUtc = Clock.GetUtcNow(),
                 }
@@ -68,8 +50,8 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
         }
 
         await using ServiceProvider provider = fixture.CreateServiceProvider();
-        var dispatcher = provider.GetRequiredService<BookingOutboxDispatcher>();
-        var consumer = provider.GetRequiredService<BookingConfirmationConsumer>();
+        var dispatcher = provider.GetRequiredService<EmailOutboxDispatcher>();
+        var consumer = provider.GetRequiredService<EmailDeliveryConsumer>();
         await dispatcher.StartAsync(ct);
         await consumer.StartAsync(ct);
 
@@ -79,7 +61,7 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
                 async () =>
                 {
                     await using PatientBookingDbContext db = fixture.CreateRawDbContext();
-                    BookingOutboxMessage? row = await db.BookingOutboxMessages.FindAsync([evt.NotificationId], ct);
+                    EmailOutboxMessage? row = await db.EmailOutboxMessages.FindAsync([evt.NotificationId], ct);
                     return row?.DispatchedAtUtc is not null;
                 },
                 TimeSpan.FromSeconds(30),
@@ -88,15 +70,15 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
             Assert.True(dispatched, "Outbox row was never marked dispatched.");
 
             bool sent = await WaitUntilAsync(
-                async () => await fixture.GetEmailCountAsync(patientEmail, ct) == 1,
+                async () => await fixture.GetEmailCountAsync(email, ct) == 1,
                 TimeSpan.FromSeconds(40),
                 ct
             );
-            int actualCount = await fixture.GetEmailCountAsync(patientEmail, ct);
+            int actualCount = await fixture.GetEmailCountAsync(email, ct);
             Assert.True(sent, $"Expected exactly one email to smtp4dev, got {actualCount}.");
 
             await using PatientBookingDbContext assertDb = fixture.CreateRawDbContext();
-            bool dedupRowExists = await assertDb.SentBookingNotifications.AnyAsync(n => n.Id == evt.NotificationId, ct);
+            bool dedupRowExists = await assertDb.SentEmailNotifications.AnyAsync(n => n.Id == evt.NotificationId, ct);
             Assert.True(dedupRowExists);
         }
         finally
@@ -113,16 +95,16 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
         CancellationToken ct = cts.Token;
 
         string email = UniqueEmail();
-        BookingConfirmedEvent evt = BuildEvent(email);
+        EmailEnvelope evt = BuildEvent(email);
 
         await using ServiceProvider provider = fixture.CreateServiceProvider();
-        var consumer = provider.GetRequiredService<BookingConfirmationConsumer>();
+        var consumer = provider.GetRequiredService<EmailDeliveryConsumer>();
         await consumer.StartAsync(ct);
 
         try
         {
-            await fixture.PublishRawAsync(evt, ct);
-            await fixture.PublishRawAsync(evt, ct);
+            await fixture.PublishRawEmailAsync(evt, ct);
+            await fixture.PublishRawEmailAsync(evt, ct);
 
             bool sent = await WaitUntilAsync(async () => await fixture.GetEmailCountAsync(email, ct) >= 1, TimeSpan.FromSeconds(40), ct);
             Assert.True(sent, "Expected at least one email to arrive.");
@@ -132,7 +114,7 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
             Assert.Equal(1, await fixture.GetEmailCountAsync(email, ct));
 
             await using PatientBookingDbContext db = fixture.CreateRawDbContext();
-            Assert.Equal(1, await db.SentBookingNotifications.CountAsync(n => n.Id == evt.NotificationId, ct));
+            Assert.Equal(1, await db.SentEmailNotifications.CountAsync(n => n.Id == evt.NotificationId, ct));
         }
         finally
         {
@@ -147,21 +129,21 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
         CancellationToken ct = cts.Token;
 
         await using ServiceProvider provider = fixture.CreateServiceProvider();
-        var consumer = provider.GetRequiredService<BookingConfirmationConsumer>();
+        var consumer = provider.GetRequiredService<EmailDeliveryConsumer>();
         await consumer.StartAsync(ct);
 
         try
         {
             await fixture.StopSqlServerAsync(ct);
 
-            // Fills the consumer's prefetchCount of 5 while the dependency it needs is down. Before
-            // the fix, an exception here escaped ReceivedAsync unhandled and the delivery was never
-            // acked/rejected - RabbitMQ would then never push a 6th message, and these 5 would stay
-            // stuck even after SQL Server came back.
-            List<BookingConfirmedEvent> events = Enumerable.Range(0, 5).Select(_ => BuildEvent(UniqueEmail())).ToList();
-            foreach (BookingConfirmedEvent evt in events)
+            // Fills the consumer's prefetchCount of 5 while the dependency it needs is down. An
+            // exception escaping ReceivedAsync unhandled would leave the delivery unacked/unrejected -
+            // RabbitMQ would then never push a 6th message, and these 5 would stay stuck even after
+            // SQL Server comes back.
+            List<EmailEnvelope> events = Enumerable.Range(0, 5).Select(_ => BuildEvent(UniqueEmail())).ToList();
+            foreach (EmailEnvelope evt in events)
             {
-                await fixture.PublishRawAsync(evt, ct);
+                await fixture.PublishRawEmailAsync(evt, ct);
             }
 
             await Task.Delay(TimeSpan.FromSeconds(5), ct);
@@ -172,9 +154,9 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
             bool allDelivered = await WaitUntilAsync(
                 async () =>
                 {
-                    foreach (BookingConfirmedEvent evt in events)
+                    foreach (EmailEnvelope evt in events)
                     {
-                        if (await fixture.GetEmailCountAsync(evt.PatientEmail, ct) != 1)
+                        if (await fixture.GetEmailCountAsync(evt.Recipient, ct) != 1)
                         {
                             return false;
                         }
@@ -205,11 +187,11 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
         Guid id = Guid.CreateVersion7();
 
         await using PatientBookingDbContext db1 = fixture.CreateRawDbContext();
-        db1.Add(new SentBookingNotification { Id = id, SentAtUtc = Clock.GetUtcNow() });
+        db1.Add(new SentEmailNotification { Id = id, SentAtUtc = Clock.GetUtcNow() });
         await db1.SaveChangesAsync(ct);
 
         await using PatientBookingDbContext db2 = fixture.CreateRawDbContext();
-        db2.Add(new SentBookingNotification { Id = id, SentAtUtc = Clock.GetUtcNow() });
+        db2.Add(new SentEmailNotification { Id = id, SentAtUtc = Clock.GetUtcNow() });
 
         DbUpdateException ex = await Assert.ThrowsAsync<DbUpdateException>(() => db2.SaveChangesAsync(ct));
 
@@ -218,64 +200,21 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
     }
 
     [Fact]
-    public async Task HandleDeliveryAsync_LegacyMessageWithoutNotificationId_DedupesAndHandlesTwoBookingsIndependently()
-    {
-        using CancellationTokenSource cts = new(TimeSpan.FromSeconds(65));
-        CancellationToken ct = cts.Token;
-
-        string email1 = UniqueEmail();
-        string email2 = UniqueEmail();
-        LegacyBookingConfirmedEvent legacy1 = BuildLegacyEvent(email1);
-        LegacyBookingConfirmedEvent legacy2 = BuildLegacyEvent(email2);
-
-        await using ServiceProvider provider = fixture.CreateServiceProvider();
-        var consumer = provider.GetRequiredService<BookingConfirmationConsumer>();
-        await consumer.StartAsync(ct);
-
-        try
-        {
-            await fixture.PublishRawAsync(legacy1, ct);
-            await fixture.PublishRawAsync(legacy2, ct);
-
-            bool bothSent = await WaitUntilAsync(
-                async () => await fixture.GetEmailCountAsync(email1, ct) == 1 && await fixture.GetEmailCountAsync(email2, ct) == 1,
-                TimeSpan.FromSeconds(40),
-                ct
-            );
-            int count1 = await fixture.GetEmailCountAsync(email1, ct);
-            int count2 = await fixture.GetEmailCountAsync(email2, ct);
-            Assert.True(bothSent, $"Both legacy-shape bookings should get exactly one email each. Got email1={count1}, email2={count2}.");
-
-            // Redeliver booking 1's legacy message again - must dedupe via the derived key, not
-            // wrongly skip booking 2 or resend booking 1.
-            await fixture.PublishRawAsync(legacy1, ct);
-            await Task.Delay(TimeSpan.FromSeconds(3), ct);
-
-            Assert.Equal(1, await fixture.GetEmailCountAsync(email1, ct));
-            Assert.Equal(1, await fixture.GetEmailCountAsync(email2, ct));
-        }
-        finally
-        {
-            await consumer.StopAsync(CancellationToken.None);
-        }
-    }
-
-    [Fact]
-    public async Task HandleDeliveryAsync_MissingPatientEmail_DeadLettersWithoutRetry()
+    public async Task HandleDeliveryAsync_MissingRecipient_DeadLettersWithoutRetry()
     {
         using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
         CancellationToken ct = cts.Token;
 
-        BookingConfirmedEvent evt = BuildEvent(patientEmail: "");
+        EmailEnvelope evt = BuildEvent(recipient: "");
 
         await using ServiceProvider provider = fixture.CreateServiceProvider();
-        var consumer = provider.GetRequiredService<BookingConfirmationConsumer>();
+        var consumer = provider.GetRequiredService<EmailDeliveryConsumer>();
         await consumer.StartAsync(ct);
 
         try
         {
             long before = await fixture.GetFailedQueueMessageCountAsync(ct);
-            await fixture.PublishRawAsync(evt, ct);
+            await fixture.PublishRawEmailAsync(evt, ct);
 
             bool deadLettered = await WaitUntilAsync(
                 async () => await fixture.GetFailedQueueMessageCountAsync(ct) > before,
@@ -298,7 +237,7 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
         CancellationToken ct = cts.Token;
 
         string email = UniqueEmail();
-        BookingConfirmedEvent evt = BuildEvent(email);
+        EmailEnvelope evt = BuildEvent(email);
 
         // Port 1 is reserved/unassigned - connecting to it fails fast without depending on any
         // externally-closed port on the machine running the tests.
@@ -311,13 +250,13 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
         };
 
         await using ServiceProvider provider = fixture.CreateServiceProvider(brokenEmail);
-        var consumer = provider.GetRequiredService<BookingConfirmationConsumer>();
+        var consumer = provider.GetRequiredService<EmailDeliveryConsumer>();
         await consumer.StartAsync(ct);
 
         try
         {
             long before = await fixture.GetFailedQueueMessageCountAsync(ct);
-            await fixture.PublishRawAsync(evt, ct);
+            await fixture.PublishRawEmailAsync(evt, ct);
 
             bool deadLettered = await WaitUntilAsync(
                 async () => await fixture.GetFailedQueueMessageCountAsync(ct) > before,
@@ -334,18 +273,24 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
         }
     }
 
+    // RabbitMQ's at-least-once dead lettering retries an unroutable dead-letter delivery on a fixed
+    // internal schedule, currently every 3 minutes, and that interval is not exposed as a policy
+    // setting: https://www.rabbitmq.com/blog/2022/03/29/at-least-once-dead-lettering. This test's
+    // timeouts are sized around that documented interval (with headroom), not an arbitrary pad - see
+    // MessagingTestFixture.BlockFailedQueueAsync for why the destination is made unavailable by
+    // deleting the queue rather than by a max-length/overflow policy.
     [Fact]
     public async Task HandleDeliveryAsync_DeadLetterDestinationUnavailableThenRecovers_MessageSurvivesAndEventuallyArrives()
     {
-        using CancellationTokenSource cts = new(TimeSpan.FromSeconds(60));
+        using CancellationTokenSource cts = new(TimeSpan.FromMinutes(5));
         CancellationToken ct = cts.Token;
 
         // Malformed payload dead-letters immediately (requeue:false) rather than waiting out the
         // 3-attempt delivery limit - the outage being tested is the destination's, not the source's.
-        BookingConfirmedEvent evt = BuildEvent(patientEmail: "");
+        EmailEnvelope evt = BuildEvent(recipient: "");
 
         await using ServiceProvider provider = fixture.CreateServiceProvider();
-        var consumer = provider.GetRequiredService<BookingConfirmationConsumer>();
+        var consumer = provider.GetRequiredService<EmailDeliveryConsumer>();
         await consumer.StartAsync(ct);
 
         try
@@ -353,11 +298,11 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
             await fixture.BlockFailedQueueAsync(ct);
 
             long before = await fixture.GetFailedQueueMessageCountAsync(ct);
-            await fixture.PublishRawAsync(evt, ct);
+            await fixture.PublishRawEmailAsync(evt, ct);
 
-            // While the destination rejects every enqueue, at-least-once dead-lettering must retry
-            // rather than drop the message - the failed queue's count should stay put, not silently
-            // lose the message.
+            // The destination queue doesn't exist right now, so the dead-letter attempt has no route
+            // at all - the message is held by the broker rather than delivered anywhere. The failed
+            // queue's count should stay put, not silently lose the message.
             await Task.Delay(TimeSpan.FromSeconds(5), ct);
             Assert.Equal(before, await fixture.GetFailedQueueMessageCountAsync(ct));
 
@@ -365,11 +310,11 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
 
             bool arrived = await WaitUntilAsync(
                 async () => await fixture.GetFailedQueueMessageCountAsync(ct) > before,
-                TimeSpan.FromSeconds(30),
+                TimeSpan.FromMinutes(4),
                 ct
             );
 
-            Assert.True(arrived, "Message should survive the destination outage and eventually reach booking-confirmed.failed once it recovers.");
+            Assert.True(arrived, "Message should survive the destination outage and eventually reach email-delivery.failed once it recovers.");
         }
         finally
         {
@@ -378,72 +323,60 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
         }
     }
 
-    private static string UniqueEmail() => $"patient-{Guid.NewGuid():N}@patientbooking.test";
+    [Fact]
+    public async Task HandleDeliveryAsync_ExpiredEnvelope_IsNotSentAndLeavesNoDedupRow()
+    {
+        using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
+        CancellationToken ct = cts.Token;
 
-    private static BookingConfirmedEvent BuildEvent(string patientEmail) =>
+        string email = UniqueEmail();
+        EmailEnvelope evt = new(
+            Guid.CreateVersion7(),
+            email,
+            "Confirm your email",
+            "<p>expired</p>",
+            PlainTextBody: null,
+            Clock.GetUtcNow().AddDays(-2),
+            Clock.GetUtcNow().AddDays(-1),
+            Kind: "RegistrationConfirmation"
+        );
+
+        await using ServiceProvider provider = fixture.CreateServiceProvider();
+        var consumer = provider.GetRequiredService<EmailDeliveryConsumer>();
+        await consumer.StartAsync(ct);
+
+        try
+        {
+            await fixture.PublishRawEmailAsync(evt, ct);
+
+            // No positive wait to assert on directly (there is nothing that ever becomes true) - give
+            // the consumer a fixed window to have processed the message, then assert the negative.
+            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+
+            Assert.Equal(0, await fixture.GetEmailCountAsync(email, ct));
+
+            await using PatientBookingDbContext db = fixture.CreateRawDbContext();
+            Assert.False(await db.SentEmailNotifications.AnyAsync(n => n.Id == evt.NotificationId, ct));
+        }
+        finally
+        {
+            await consumer.StopAsync(CancellationToken.None);
+        }
+    }
+
+    private static string UniqueEmail() => $"notify-{Guid.NewGuid():N}@patientbooking.test";
+
+    private static EmailEnvelope BuildEvent(string recipient) =>
         new(
             Guid.CreateVersion7(),
-            Random.Shared.Next(1, int.MaxValue),
-            $"BK-{Guid.NewGuid():N}",
-            patientEmail,
-            "Test Patient",
-            "Test Clinic",
-            Clock.GetUtcNow().AddDays(1),
-            100.00m
+            recipient,
+            "Test notification",
+            "<p>Test body</p>",
+            PlainTextBody: null,
+            Clock.GetUtcNow(),
+            ExpiresAtUtc: null,
+            Kind: "Test"
         );
-
-    private static LegacyBookingConfirmedEvent BuildLegacyEvent(string patientEmail) =>
-        new(
-            Random.Shared.Next(1, int.MaxValue),
-            $"BK-{Guid.NewGuid():N}",
-            patientEmail,
-            "Test Patient",
-            "Test Clinic",
-            Clock.GetUtcNow().AddDays(1),
-            100.00m
-        );
-
-    private async Task<(Booking Booking, string PatientEmail)> SeedBookingAsync(CancellationToken ct)
-    {
-        string suffix = Guid.NewGuid().ToString("N")[..12];
-        await using PatientBookingDbContext db = fixture.CreateRawDbContext();
-
-        ApplicationUser user = new()
-        {
-            UserName = $"patient-{suffix}",
-            Email = $"patient-{suffix}@patientbooking.test",
-            NormalizedUserName = $"PATIENT-{suffix}".ToUpperInvariant(),
-            NormalizedEmail = $"PATIENT-{suffix}@PATIENTBOOKING.TEST".ToUpperInvariant(),
-            EmailConfirmed = true,
-            SecurityStamp = Guid.NewGuid().ToString(),
-        };
-        db.Users.Add(user);
-        await db.SaveChangesAsync(ct);
-
-        Clinic clinic = new() { Name = $"Test Clinic {suffix}", Address = "1 Test Way" };
-        db.Clinics.Add(clinic);
-        await db.SaveChangesAsync(ct);
-
-        Patient patient = new() { UserId = user.Id };
-        db.Patients.Add(patient);
-        await db.SaveChangesAsync(ct);
-
-        Booking booking = new()
-        {
-            ClinicId = clinic.Id,
-            PatientId = patient.Id,
-            BookingNumber = $"BK-{suffix}",
-            FirstTimeBooking = false,
-            AppointmentStartUtc = Clock.GetUtcNow().AddDays(1),
-            AppointmentDateUtc = DateOnly.FromDateTime(Clock.GetUtcNow().AddDays(1).UtcDateTime),
-            IdempotencyKey = Guid.NewGuid().ToString(),
-            CreatedAtUtc = Clock.GetUtcNow(),
-        };
-        db.Bookings.Add(booking);
-        await db.SaveChangesAsync(ct);
-
-        return (booking, user.Email!);
-    }
 
     private static async Task<bool> WaitUntilAsync(Func<Task<bool>> predicate, TimeSpan timeout, CancellationToken ct)
     {

@@ -9,15 +9,15 @@ using RabbitMQ.Client.Events;
 
 namespace PatientBooking.Api.BackgroundServices;
 
-// Delivers registration-confirmation emails, mirroring BookingConfirmationConsumer's confirmed
-// publish / manual-ack / retry / dead-letter / dedup design. No legacy-message compatibility code
-// is needed here - registration-confirmation is a brand new queue with no messages predating
-// RegistrationConfirmationEvent's NotificationId field.
-public sealed class RegistrationConfirmationConsumer(
+// Delivers every background-sent email (booking confirmation, registration confirmation, and any
+// future kind) through one shared confirmed-publish / manual-ack / retry / dead-letter / dedup
+// pipeline. This consumer never inspects Kind to rebuild per-feature logic - it only sends the
+// envelope's already-composed Subject/HtmlBody through the actual transport sender.
+public sealed class EmailDeliveryConsumer(
     RabbitMqConnectionProvider connectionProvider,
     IServiceScopeFactory scopeFactory,
     TimeProvider clock,
-    ILogger<RegistrationConfirmationConsumer> logger
+    ILogger<EmailDeliveryConsumer> logger
 ) : BackgroundService
 {
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(10);
@@ -33,7 +33,7 @@ public sealed class RegistrationConfirmationConsumer(
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                logger.RegistrationConfirmationConsumerLoopFailed(ex);
+                logger.EmailConsumerLoopFailed(ex);
             }
 
             if (!stoppingToken.IsCancellationRequested)
@@ -54,13 +54,17 @@ public sealed class RegistrationConfirmationConsumer(
 
         await using (channel.ConfigureAwait(false))
         {
-            await RabbitMqRegistrationEventPublisher.DeclareTopologyAsync(channel, ct);
+            await RabbitMqEmailPublisher.DeclareTopologyAsync(channel, ct);
 
+            // Some in-flight at once than unbounded.
+            // RabbitMQ pushes every waiting message to consumer with no prefetch limit set.
             await channel.BasicQosAsync(prefetchSize: 0, prefetchCount: 5, global: false, cancellationToken: ct);
 
             AsyncEventingBasicConsumer consumer = new(channel);
             consumer.ReceivedAsync += async (_, ea) => await HandleDeliveryAsync(channel, ea, ct);
 
+            // BasicConsumeAsync returns once consumer is registered
+            // Stay here until shutdown, cancellation, or channel drops out from under us
             using CancellationTokenSource idleSignal = new();
             await using CancellationTokenRegistration registration = ct.Register(idleSignal.Cancel);
 
@@ -78,9 +82,13 @@ public sealed class RegistrationConfirmationConsumer(
                 return Task.CompletedTask;
             };
 
+            // Fires for both a client-ack'd cancel and a broker-initiated basic.cancel - e.g. the
+            // queue was deleted while the connection stayed up. Automatic connection recovery can't
+            // fix this (the connection never dropped), so this is the one case that needs a manual
+            // restart: redeclare the queue and re-consume via the outer retry loop.
             consumer.UnregisteredAsync += (_, ea) =>
             {
-                logger.RegistrationConfirmationConsumerCancelled(string.Join(',', ea.ConsumerTags));
+                logger.EmailConsumerCancelled(string.Join(',', ea.ConsumerTags));
 
                 try
                 {
@@ -95,7 +103,7 @@ public sealed class RegistrationConfirmationConsumer(
             };
 
             await channel.BasicConsumeAsync(
-                RabbitMqRegistrationEventPublisher.QueueName,
+                RabbitMqEmailPublisher.QueueName,
                 autoAck: false,
                 consumer,
                 cancellationToken: ct
@@ -119,26 +127,37 @@ public sealed class RegistrationConfirmationConsumer(
 
     private async Task HandleDeliveryAsync(IChannel channel, BasicDeliverEventArgs ea, CancellationToken ct)
     {
-        RegistrationConfirmationEvent? evt;
+        EmailEnvelope? evt;
         try
         {
-            evt = JsonSerializer.Deserialize<RegistrationConfirmationEvent>(ea.Body.Span);
+            evt = JsonSerializer.Deserialize<EmailEnvelope>(ea.Body.Span);
         }
         catch (JsonException ex)
         {
-            logger.RegistrationConfirmationMessageMalformed(ex);
+            logger.EmailMessageMalformed(ex);
             await NackWithoutRequeueAsync(channel, ea.DeliveryTag, ct);
             return;
         }
 
         if (
             evt is null || evt.NotificationId == Guid.Empty || string.IsNullOrWhiteSpace(
-                evt.UserId
-            ) || string.IsNullOrWhiteSpace(evt.Email) || string.IsNullOrWhiteSpace(evt.ConfirmationLink)
+                evt.Recipient
+            ) || string.IsNullOrWhiteSpace(evt.Subject) || string.IsNullOrWhiteSpace(evt.HtmlBody)
         )
         {
-            logger.RegistrationConfirmationMessageMalformed(null);
+            logger.EmailMessageMalformed(null);
             await NackWithoutRequeueAsync(channel, ea.DeliveryTag, ct);
+            return;
+        }
+
+        // A message can sit in the queue for a while (broker/consumer downtime) - re-check expiry at
+        // send time too, not just at dispatch time, so a stale envelope is never sent nor recorded as
+        // sent. Dropped via a plain ack (not a dedup row): there is nothing to deduplicate against
+        // since it was never sent.
+        if (evt.ExpiresAtUtc is { } expiresAtUtc && expiresAtUtc <= clock.GetUtcNow())
+        {
+            logger.EmailMessageExpired(evt.NotificationId);
+            await channel.BasicAckAsync(ea.DeliveryTag, multiple: false, ct);
             return;
         }
 
@@ -151,20 +170,20 @@ public sealed class RegistrationConfirmationConsumer(
             await using AsyncServiceScope scope = scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<PatientBookingDbContext>();
 
-            bool alreadySent = await db.SentRegistrationNotifications.AnyAsync(n => n.Id == evt.NotificationId, ct);
+            bool alreadySent = await db.SentEmailNotifications.AnyAsync(n => n.Id == evt.NotificationId, ct);
             if (alreadySent)
             {
-                logger.RegistrationConfirmationDuplicateSkipped(evt.NotificationId);
+                logger.EmailDuplicateSkipped(evt.NotificationId);
                 await channel.BasicAckAsync(ea.DeliveryTag, multiple: false, ct);
                 return;
             }
 
-            var sender = scope.ServiceProvider.GetRequiredService<IRegistrationNotificationSender>();
-            await sender.SendRegistrationConfirmationAsync(evt, ct);
+            var sender = scope.ServiceProvider.GetRequiredService<IEmailTransportSender>();
+            await sender.SendAsync(evt.Recipient, evt.Subject, evt.HtmlBody, evt.PlainTextBody, ct);
 
             try
             {
-                db.Add(new SentRegistrationNotification { Id = evt.NotificationId, SentAtUtc = clock.GetUtcNow() });
+                db.Add(new SentEmailNotification { Id = evt.NotificationId, SentAtUtc = clock.GetUtcNow() });
                 await db.SaveChangesAsync(ct);
             }
             catch (DbUpdateException ex) when (ex.InnerException is SqlException { Number: 2627 or 2601 })
@@ -172,7 +191,7 @@ public sealed class RegistrationConfirmationConsumer(
                 // Genuine duplicate-key race: a concurrent redelivery beat us to recording this
                 // dedup row. The email already went out (by us or by it) either way, so ack rather
                 // than retry a send that already happened.
-                logger.RegistrationConfirmationDuplicateSkipped(evt.NotificationId);
+                logger.EmailDuplicateSkipped(evt.NotificationId);
             }
 
             // Reached on success and on a confirmed duplicate-key race. Any OTHER SaveChangesAsync
@@ -185,13 +204,15 @@ public sealed class RegistrationConfirmationConsumer(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.RegistrationConfirmationMessageHandlingFailed(ex);
+            logger.EmailMessageHandlingFailed(ex);
 
             // Short delay before the broker-counted redelivery, not a hand-rolled attempt counter -
-            // the registration-confirmation-retry-limit policy dead-letters to
-            // registration-confirmation.failed once RabbitMQ's own delivery-limit is exceeded. This
-            // must be basic.reject, not basic.nack - see BookingConfirmationConsumer for the same
-            // reasoning against the same RabbitMQ 4.3 quorum-queue delivery-count semantics.
+            // the email-delivery-retry-limit policy dead-letters to email-delivery.failed once
+            // RabbitMQ's own delivery-limit is exceeded. This must be basic.reject, not basic.nack -
+            // as of RabbitMQ 4.3, delivery-limit counts on delivery-count, and an explicit nack is
+            // treated as an unlimited application-level return that does NOT increment it (so it
+            // would requeue forever); only reject (or an actual consumer/channel/connection failure)
+            // counts as a real delivery attempt. https://www.rabbitmq.com/docs/quorum-queues#poison-message-handling
             await Task.Delay(SendFailureDelay, ct);
 
             try
@@ -200,7 +221,7 @@ public sealed class RegistrationConfirmationConsumer(
             }
             catch (Exception nackEx) when (nackEx is not OperationCanceledException)
             {
-                logger.RegistrationConfirmationNackFailed(nackEx);
+                logger.EmailNackFailed(nackEx);
             }
         }
     }
@@ -209,11 +230,14 @@ public sealed class RegistrationConfirmationConsumer(
     {
         try
         {
+            // requeue:false is itself an immediate dead-letter reason, distinct from delivery-limit
+            // exhaustion - a malformed message goes straight to email-delivery.failed, no wasted
+            // retries on a payload that will never deserialize.
             await channel.BasicNackAsync(deliveryTag, multiple: false, requeue: false, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.RegistrationConfirmationNackFailed(ex);
+            logger.EmailNackFailed(ex);
         }
     }
 }
