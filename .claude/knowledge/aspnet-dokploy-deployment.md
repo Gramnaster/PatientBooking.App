@@ -249,3 +249,36 @@ policy step with no API process running at all closes that gap entirely, using o
 that already existed rather than a new code-level readiness gate. Not verified on the VPS -
 only locally, and only as a documented procedure (the actual `migrator` invocation against
 the real Dokploy Compose project has not been run by the agent).
+
+### Domain-tab traffic block replaced with a VPS firewall block (2026-09-10)
+
+The previous entry above assumed disabling the API's Dokploy domain "immediately stops new
+inbound HTTP requests" for this Compose-deployed app. Checked against
+[Dokploy's own domain documentation](https://docs.dokploy.com/docs/core/domains) and found
+wrong: Docker Compose services "must redeploy... for domain changes to take effect" because
+Compose "does not support hot reloading of domain configurations" - the opposite of
+Applications, where domain changes apply immediately via Traefik's file provider. A redeploy
+here would rebuild and recreate the `api` container, killing the still-draining old
+dispatcher/consumer (they run in-process inside the API, not as separate workers) and
+risking the new consolidated code starting before the migration and broker policy are ready
+- exactly what the cutover exists to avoid.
+
+The runbook's step 1 now blocks at the VPS firewall (`sudo ufw deny 80/tcp`/`443/tcp`, the
+ports Dokploy's shared `dokploy-traefik` container publishes) instead, verified from outside
+the VPS with `curl` against both the domain and the API's directly-published port 8080
+(`docker-compose.yml`'s `api` service publishes `8080:8080` - a `Program.cs` comment claims
+ufw already blocks external access to it, which this check verifies rather than assumes).
+Whether that port is actually closed had never been independently confirmed before this
+pass. Not verified on the real VPS - only against Dokploy's and RabbitMQ's official docs and
+this repo's own Compose file.
+
+Also clarified: the `migrator` service builds from whatever commit is checked out in
+Dokploy's own Compose working directory on disk, not from whatever Dokploy's UI shows as
+"last deployed," and Dokploy's Deploy button for a Compose app always fetches new code and
+starts every non-tool-profile service (including `api`) together - there is no way to
+decouple the two through Dokploy alone. The runbook now advances that checkout directly with
+`git fetch`/`git reset --hard` before invoking the migrator, then starts `api` with a direct
+`docker compose up -d --build` rather than through Dokploy's Deploy button, so the
+migrate-then-start ordering is guaranteed rather than assumed. Not verified on the real VPS -
+the working-directory/project-name discovery via `docker inspect`'s Compose labels, and the
+git/`docker compose` sequence built on it, are documented procedure only.

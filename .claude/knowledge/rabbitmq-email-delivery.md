@@ -100,21 +100,28 @@ copies every row from both old `Sent*Notifications` tables into the new
 `SentEmailNotifications` (matched by `Id`, idempotent) so a legacy notification ID that
 somehow gets replayed later is still recognized as already-sent. See
 [the deployment runbook](../../docs/deployment.md#one-time-migration-cutover-from-the-old-per-domain-pipelines-this-deploy-only)
-for the exact nine-step sequence: block new writes by disabling the API's Dokploy domain
-(not by stopping the container, which would also kill the old dispatcher/consumer still
-draining it), drain both old outboxes and confirm both `messages_ready` **and**
-`messages_unacknowledged` are zero on both old queues (not `messages_ready` alone - a
-message can be delivered-but-unacked to an old consumer and still not show up there),
-replay anything worth keeping in the old failed queues, repeat the drain/queue checks
-once more immediately before stopping the old API, then run the migration and apply the
-new broker policy via the `migrator` Compose service with no API instance running at all
-before starting the new one - the only way to guarantee
+for the exact nine-step sequence: block new writes at the VPS firewall (`ufw`), not by
+disabling the API's Dokploy domain and not by stopping the container - for a Compose-deployed
+app, Dokploy only applies a domain change on redeploy (confirmed against Dokploy's own docs;
+it is not hot-reloaded the way a single-image Application's domain is), and a redeploy would
+both rebuild the `api` container (killing the old dispatcher/consumer still draining it -
+they run in-process inside the API, not as separate workers) and risk starting the new
+pipeline's code before the migration/policy are ready. Then drain both old outboxes and
+confirm both `messages_ready` **and** `messages_unacknowledged` are zero on both old queues
+(not `messages_ready` alone - a message can be delivered-but-unacked to an old consumer and
+still not show up there), replay anything worth keeping in the old failed queues, repeat the
+drain/queue checks once more immediately before stopping the old API, then run the migration
+and apply the new broker policy via the `migrator` Compose service with no API instance
+running at all before starting the new one - the only way to guarantee
 `EmailOutboxDispatcher`/`EmailDeliveryConsumer` never run against a not-yet-migrated
 schema or not-yet-policied queue, since nothing in `Program.cs` gates their startup on
-either. A documented maintenance-window cutover was chosen over a dual-running
-compatibility shim, since this is a solo, low-volume application and rolling-upgrade
-support would be meaningfully more complex than the
-traffic justifies. Do not reintroduce that complexity without a concrete need.
+either. Because Dokploy's Deploy button always fetches code and starts `api` together with
+no way to decouple them, getting the new commit onto disk before running the migrator uses
+`git` directly against Dokploy's own checkout directory, then starts `api` with a direct
+`docker compose up -d --build` rather than through Dokploy's Deploy button. A documented
+maintenance-window cutover was chosen over a dual-running compatibility shim, since this is
+a solo, low-volume application and rolling-upgrade support would be meaningfully more complex
+than the traffic justifies. Do not reintroduce that complexity without a concrete need.
 
 ### Contributor example: adding a new ordinary email type
 
