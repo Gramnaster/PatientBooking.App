@@ -97,6 +97,8 @@ public sealed class MessagingTestFixture : IAsyncLifetime
         await MigrateDatabaseAsync();
         await DeclareTopologyAsync();
         await ApplyDeadLetterPolicyAsync();
+        await DeclareRegistrationTopologyAsync();
+        await ApplyRegistrationDeadLetterPolicyAsync();
     }
 
     public async ValueTask DisposeAsync()
@@ -180,6 +182,11 @@ public sealed class MessagingTestFixture : IAsyncLifetime
         services.AddSingleton<BookingConfirmationConsumer>();
         services.AddSingleton<BookingOutboxDispatcher>();
 
+        services.AddSingleton<IRegistrationEventPublisher, RabbitMqRegistrationEventPublisher>();
+        services.AddSingleton<IRegistrationNotificationSender>(sp => sp.GetRequiredService<SmtpIdentityEmailSender>());
+        services.AddSingleton<RegistrationConfirmationConsumer>();
+        services.AddSingleton<RegistrationOutboxDispatcher>();
+
         return services.BuildServiceProvider();
     }
 
@@ -199,6 +206,28 @@ public sealed class MessagingTestFixture : IAsyncLifetime
         await channel.BasicPublishAsync(
             exchange: string.Empty,
             routingKey: RabbitMqBookingEventPublisher.QueueName,
+            mandatory: false,
+            basicProperties: properties,
+            body: body,
+            cancellationToken: ct
+        );
+    }
+
+    // Publishes a raw payload directly to registration-confirmation, bypassing the outbox - mirrors
+    // PublishRawAsync above, for the registration-confirmation consumer's own regression tests.
+    public async Task PublishRawRegistrationAsync<T>(T payload, CancellationToken ct)
+    {
+        ConnectionFactory factory = BuildConnectionFactory();
+        await using IConnection connection = await factory.CreateConnectionAsync(ct);
+        await using IChannel channel = await connection.CreateChannelAsync(cancellationToken: ct);
+        await RabbitMqRegistrationEventPublisher.DeclareTopologyAsync(channel, ct);
+
+        byte[] body = JsonSerializer.SerializeToUtf8Bytes(payload);
+        BasicProperties properties = new() { Persistent = true };
+
+        await channel.BasicPublishAsync(
+            exchange: string.Empty,
+            routingKey: RabbitMqRegistrationEventPublisher.QueueName,
             mandatory: false,
             basicProperties: properties,
             body: body,
@@ -293,6 +322,21 @@ public sealed class MessagingTestFixture : IAsyncLifetime
         return document.RootElement.TryGetProperty("messages", out JsonElement messages) ? messages.GetInt64() : 0;
     }
 
+    public async Task<long> GetRegistrationFailedQueueMessageCountAsync(CancellationToken ct)
+    {
+        using HttpResponseMessage response = await rabbitMqManagementApi.GetAsync(
+            $"/api/queues/%2f/{Uri.EscapeDataString(RabbitMqRegistrationEventPublisher.FailedQueueName)}",
+            ct
+        );
+        if (!response.IsSuccessStatusCode)
+        {
+            return 0;
+        }
+
+        using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        return document.RootElement.TryGetProperty("messages", out JsonElement messages) ? messages.GetInt64() : 0;
+    }
+
     private async Task MigrateDatabaseAsync()
     {
         await using PatientBookingDbContext db = CreateRawDbContext();
@@ -329,6 +373,39 @@ public sealed class MessagingTestFixture : IAsyncLifetime
         using StringContent content = new(JsonSerializer.Serialize(policy), Encoding.UTF8, "application/json");
         using HttpResponseMessage response = await rabbitMqManagementApi.PutAsync(
             "/api/policies/%2f/booking-confirmed-retry-limit",
+            content
+        );
+        response.EnsureSuccessStatusCode();
+    }
+
+    private async Task DeclareRegistrationTopologyAsync()
+    {
+        ConnectionFactory factory = BuildConnectionFactory();
+        await using IConnection connection = await factory.CreateConnectionAsync();
+        await using IChannel channel = await connection.CreateChannelAsync();
+        await RabbitMqRegistrationEventPublisher.DeclareTopologyAsync(channel, CancellationToken.None);
+    }
+
+    private async Task ApplyRegistrationDeadLetterPolicyAsync()
+    {
+        Dictionary<string, object> definition = new(StringComparer.Ordinal)
+        {
+            ["delivery-limit"] = 3,
+            ["dead-letter-exchange"] = RabbitMqRegistrationEventPublisher.DeadLetterExchangeName,
+            ["dead-letter-routing-key"] = RabbitMqRegistrationEventPublisher.FailedQueueName,
+            ["dead-letter-strategy"] = "at-least-once",
+            ["overflow"] = "reject-publish",
+        };
+        Dictionary<string, object> policy = new(StringComparer.Ordinal)
+        {
+            ["pattern"] = "^registration-confirmation$",
+            ["definition"] = definition,
+            ["apply-to"] = "queues",
+        };
+
+        using StringContent content = new(JsonSerializer.Serialize(policy), Encoding.UTF8, "application/json");
+        using HttpResponseMessage response = await rabbitMqManagementApi.PutAsync(
+            "/api/policies/%2f/registration-confirmation-retry-limit",
             content
         );
         response.EnsureSuccessStatusCode();

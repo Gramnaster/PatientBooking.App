@@ -215,6 +215,13 @@ try
     builder.Services.AddHostedService<BookingConfirmationConsumer>();
     builder.Services.AddHostedService<BookingOutboxDispatcher>();
 
+    builder.Services.AddSingleton<IRegistrationEventPublisher, RabbitMqRegistrationEventPublisher>();
+    builder.Services.AddSingleton<IRegistrationNotificationSender>(
+        sp => sp.GetRequiredService<SmtpIdentityEmailSender>()
+    );
+    builder.Services.AddHostedService<RegistrationConfirmationConsumer>();
+    builder.Services.AddHostedService<RegistrationOutboxDispatcher>();
+
     // Data Protection's own key ring, persisted to disk so okeys survive app restarts
     var dataProtectionKeyPath = builder.Configuration["DataProtection:KeyPath"];
     builder

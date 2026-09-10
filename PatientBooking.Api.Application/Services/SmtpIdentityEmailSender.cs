@@ -18,7 +18,7 @@ namespace PatientBooking.Api.Application.Services;
 public sealed class SmtpIdentityEmailSender(
     IOptions<EmailSettings> emailOptions,
     ILogger<SmtpIdentityEmailSender> logger
-) : IEmailSender<ApplicationUser>, ILoginNotificationSender, IBookingNotificationSender
+) : IEmailSender<ApplicationUser>, ILoginNotificationSender, IBookingNotificationSender, IRegistrationNotificationSender
 {
     public Task SendConfirmationLinkAsync(ApplicationUser user, string email, string confirmationLink) =>
         SendEmailAsync(
@@ -79,6 +79,16 @@ public sealed class SmtpIdentityEmailSender(
             ct
         );
     }
+
+    // Same subject/body as SendConfirmationLinkAsync above - this is the background-delivery path
+    // for the identical email, used by registration instead of the synchronous IEmailSender<T> call.
+    public Task SendRegistrationConfirmationAsync(RegistrationConfirmationEvent evt, CancellationToken ct) =>
+        SendEmailAsync(
+            evt.Email,
+            "Confirm your email",
+            $"""Please confirm your Patient Booking account by <a href="{WebUtility.HtmlEncode(evt.ConfirmationLink)}">clicking here</a>""",
+            ct
+        );
 
     private async Task SendEmailAsync(string toEmail, string subject, string htmlBody, CancellationToken ct = default)
     {

@@ -113,9 +113,10 @@ notification. Account setup is one-time while `rabbitmq-data` persists; do not d
 volume to fix credentials. Never paste the real password into committed documentation.
 See [RabbitMQ user management](https://www.rabbitmq.com/docs/access-control#user-management).
 
-The API starts and keeps serving bookings even if the broker is down or not yet deployed -
-confirmation emails queue up in the database outbox and get delivered once the broker's reachable.
-Nothing needs the broker to be healthy before the API starts.
+The API starts and keeps serving bookings and patient registrations even if the broker is down or
+not yet deployed - both booking confirmations and registration-confirmation emails queue up in the
+database outbox (`BookingOutboxMessages` / `RegistrationOutboxMessages`) and get delivered once the
+broker's reachable. Nothing needs the broker to be healthy before the API starts.
 
 ### Retry/dead-letter policy (one-time, per broker)
 
@@ -159,15 +160,31 @@ queue) with full `x-death` history for diagnosis - see
 [RabbitMQ's dead-lettering docs](https://www.rabbitmq.com/docs/dlx) and
 [quorum queue delivery limits](https://www.rabbitmq.com/docs/quorum-queues#poison-message-handling).
 
-### Recovery from `booking-confirmed.failed` is manual, not automatic
+Patient registration confirmation emails go through a separate, identically-structured pipeline:
+`registration-confirmation` / `registration-confirmation.failed` / `registration-confirmation.dlx`,
+with its own outbox (`RegistrationOutboxMessages`) and dedup table (`SentRegistrationNotifications`).
+It needs the same one-time policy applied, under its own policy name and pattern:
+
+```sh
+rabbitmqctl set_policy registration-confirmation-retry-limit "^registration-confirmation$" \
+  '{"delivery-limit":3,"dead-letter-exchange":"registration-confirmation.dlx","dead-letter-routing-key":"registration-confirmation.failed","dead-letter-strategy":"at-least-once","overflow":"reject-publish"}' \
+  --apply-to queues
+```
+
+Everything above about `at-least-once`, `overflow: reject-publish`, the `stream_queue` feature
+flag, and verifying with `rabbitmqctl list_policies` applies identically here - it is the same
+broker mechanism pointed at a second queue, not a different one.
+
+### Recovery from `booking-confirmed.failed` / `registration-confirmation.failed` is manual, not automatic
 
 If SQL Server stays unavailable long enough for a delivery to exhaust its 3 attempts (each retry
 waits 1 second plus reject/redeliver latency, so this takes on the order of seconds, not minutes),
-the confirmation lands in `booking-confirmed.failed` even though the underlying cause was transient
-and would have succeeded on a later retry. Nothing consumes `booking-confirmed.failed` - `Program.cs`
-registers exactly two hosted services, `BookingConfirmationConsumer` (reads `booking-confirmed` only)
-and `BookingOutboxDispatcher` - so a message that lands there stays there until someone replays it by
-hand.
+the confirmation lands in the failed queue even though the underlying cause was transient and would
+have succeeded on a later retry. Nothing consumes either failed queue - `Program.cs` registers four
+hosted services: `BookingConfirmationConsumer` (reads `booking-confirmed` only) and
+`RegistrationConfirmationConsumer` (reads `registration-confirmation` only), each paired with its
+own outbox dispatcher (`BookingOutboxDispatcher`, `RegistrationOutboxDispatcher`) - so a message that
+lands in either failed queue stays there until someone replays it by hand.
 
 The procedure below never removes a message from `booking-confirmed.failed` until its replay is
 confirmed to have worked. Get Message(s) with Ack Mode "Nack message requeue false" deletes on read

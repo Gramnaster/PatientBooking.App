@@ -1,26 +1,40 @@
 # RabbitMQ email delivery knowledge
 
-Last reviewed: 2026-09-10. Scope: this project's booking notifications, using raw
-RabbitMQ.Client, EF Core/SQL Server, and MailKit SMTP. Read this before modifying
-publishing, consumers, retry policy, or background email delivery.
+Last reviewed: 2026-09-10. Scope: this project's booking notifications and patient
+registration confirmation, using raw RabbitMQ.Client, EF Core/SQL Server, and MailKit
+SMTP. Read this before modifying publishing, consumers, retry policy, or background
+email delivery.
 
 ## Evidence and scope
 
-- Source inspected on the review date: publisher, consumer, dispatcher, booking and
-  user services, test project, Compose, and deployment runbook.
+- Source inspected on the review date: both publishers, both consumers, both
+  dispatchers, booking and user services, test project, Compose, and deployment
+  runbook.
 - Claude reported eight real-infrastructure tests passing against local SQL Server,
   RabbitMQ, and smtp4dev, including a later-added test that blocks the failed queue with
   a `max-length: 0`/`overflow: reject-publish` policy and confirms a message survives the
   outage and eventually arrives once the policy is lifted. This knowledge-writing session
   did not rerun them.
 - Local results do not verify the VPS, its effective broker policy, or its volumes.
-- Booking notifications use the outbox. Registration, confirmation resend, password
-  reset, and login notifications must be traced separately. `UsersService` still
-  awaits email calls; registration currently does so before its transaction commits.
+- Booking notifications and patient registration confirmation both use the outbox now
+  (separate tables/queues each - see below). Confirmation resend, password reset, and
+  login notifications are still traced separately and still send synchronously via
+  `SmtpIdentityEmailSender` - `UsersService.SendConfirmationEmailAsync` (used only by
+  `ResendConfirmationEmailAsync`), `SendPasswordResetCodeAsync`/`SendPasswordResetLinkAsync`,
+  and `SendLoginNotificationAsync` were deliberately left unchanged; only the
+  registration path (`EnqueueConfirmationEmailAsync`) was moved to the outbox.
+- **Employee registration (`EmployeeService.CreateEmployeeAsync`) sends no email at
+  all today** - not synchronously, not through any outbox. This was true before this
+  change and is still true after it; the user explicitly deferred employee-invitation
+  email work to a follow-up session. Do not assume an employee outbox/consumer exists
+  yet - `RegistrationOutboxMessage`/`RegistrationConfirmationConsumer` currently serve
+  patient registration only, keyed by a `UserId` FK, not a role.
 - The user's intended outcome is background delivery for all email flows. That is a
   requirement, not a claim that this implementation already covers every flow.
 
 ## Current flow and ownership
+
+### Booking confirmation
 
 1. `BookingServices` saves the booking and `BookingOutboxMessage` in the same explicit
    database transaction. It does not publish directly to RabbitMQ.
@@ -35,17 +49,59 @@ publishing, consumers, retry policy, or background email delivery.
 5. Malformed messages and exhausted retries go to `booking-confirmed.failed` through
    `booking-confirmed.dlx`, subject to the deployed broker policy.
 
+### Patient registration confirmation (added 2026-09-10)
+
+Same design, a separate, parallel pipeline rather than a shared/generalized one -
+booking's own components were left untouched on purpose (`RabbitMqConnectionProvider`
+was already queue-agnostic and is the one piece genuinely reused as-is):
+
+1. `UsersService.RegisterAsync` saves the Identity user, `Patient` row, and a
+   `RegistrationOutboxMessage` in the same explicit transaction (`BeginTransactionAsync`
+   already wrapped `UserManager.CreateAsync` - confirmed its `SaveChangesAsync` calls
+   share the ambient transaction since `IdentityDbContext<ApplicationUser>` *is*
+   `PatientBookingDbContext`, the same scoped instance `UserManager` resolves). It
+   returns success only after `transaction.CommitAsync`, so broker/SMTP downtime cannot
+   fail registration. `ResendConfirmationEmailAsync` was deliberately left calling the
+   old synchronous path (`SendConfirmationEmailAsync`) - both share a new
+   `BuildConfirmationLinkAsync` helper for the identical token/link construction, so the
+   link format and token semantics are unchanged either way.
+2. `RegistrationOutboxDispatcher` polls pending `RegistrationOutboxMessages` every five
+   seconds, up to 20 per batch - identical polling/retry shape to
+   `BookingOutboxDispatcher`.
+3. `RabbitMqRegistrationEventPublisher` - same confirmed-publish/`mandatory:true`/
+   returned-message handling as `RabbitMqBookingEventPublisher`, publishing to
+   `registration-confirmation`.
+4. `RegistrationConfirmationConsumer` consumes `registration-confirmation` with manual
+   acknowledgements and prefetch 5, checks `SentRegistrationNotifications`, sends
+   through `IRegistrationNotificationSender` (implemented by `SmtpIdentityEmailSender`,
+   same subject/body as the synchronous `SendConfirmationLinkAsync`), records the
+   notification ID, then acknowledges. No legacy-message dedup-key derivation is needed
+   here (unlike booking's `DeriveLegacyDedupKey`) - `registration-confirmation` is a
+   brand new queue with no messages predating `NotificationId`.
+5. Malformed messages and exhausted retries go to `registration-confirmation.failed`
+   through `registration-confirmation.dlx`, subject to its own broker policy (separate
+   policy name/pattern from booking's - see the deployment runbook).
+
 Source locations (relative to the repository root):
 
 - `PatientBooking.Api.Application/Services/BookingServices.cs`
 - `PatientBooking.Api.Application/Services/UsersService.cs`
 - `PatientBooking.Api.Application/Messaging/BookingConfirmedEvent.cs`
+- `PatientBooking.Api.Application/Messaging/RegistrationConfirmationEvent.cs`
 - `PatientBooking.Api.Application/Messaging/RabbitMqBookingEventPublisher.cs`
+- `PatientBooking.Api.Application/Messaging/RabbitMqRegistrationEventPublisher.cs`
 - `PatientBooking.Api.Application/Messaging/RabbitMqConnectionProvider.cs`
 - `PatientBooking.Api/BackgroundServices/BookingOutboxDispatcher.cs`
 - `PatientBooking.Api/BackgroundServices/BookingConfirmationConsumer.cs`
+- `PatientBooking.Api/BackgroundServices/RegistrationOutboxDispatcher.cs`
+- `PatientBooking.Api/BackgroundServices/RegistrationConfirmationConsumer.cs`
+- `PatientBooking.Api.Domain/RegistrationOutboxMessage.cs`,
+  `PatientBooking.Api.Domain/SentRegistrationNotification.cs`
 - `PatientBooking.Api.Tests/BookingConfirmationConsumerTests.cs`
+- `PatientBooking.Api.Tests/RegistrationConfirmationConsumerTests.cs`
+- `PatientBooking.Api.Tests/PatientRegistrationEndpointTests.cs`
 - `PatientBooking.Api.Tests/Infrastructure/MessagingTestFixture.cs`
+- `PatientBooking.Api.Tests/Infrastructure/BookingEndpointTestFixture.cs`
 
 An async method is not automatically a background job. Awaiting SMTP still keeps the
 request pending. Durable background delivery requires committing the queued work and

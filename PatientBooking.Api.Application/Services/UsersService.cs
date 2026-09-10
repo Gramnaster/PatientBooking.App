@@ -9,6 +9,7 @@ using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using PatientBooking.Api.Application.Contracts;
 using PatientBooking.Api.Application.DTOs.Auth;
+using PatientBooking.Api.Application.Messaging;
 using PatientBooking.Api.Common.Enums;
 using PatientBooking.Api.Common.Models.Config;
 using PatientBooking.Api.Common.Results;
@@ -17,6 +18,7 @@ using System.Globalization;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace PatientBooking.Api.Application.Services;
 
@@ -88,8 +90,9 @@ public class UsersService(
                 IdentifierCodeEncoder.MedicalRecordNumberShape
             );
 
-            // Inform the user by email their registration is confirmed
-            await SendConfirmationEmailAsync(user);
+            // Queues the confirmation email in the same transaction instead of awaiting SMTP here -
+            // a background worker delivers it, so broker/SMTP downtime can no longer fail registration.
+            await EnqueueConfirmationEmailAsync(user, ct);
 
             await patientBookingDbContext.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
@@ -155,16 +158,39 @@ public class UsersService(
         return Result.Success();
     }
 
-    private async Task SendConfirmationEmailAsync(ApplicationUser user)
+    private async Task<string> BuildConfirmationLinkAsync(ApplicationUser user)
     {
         var token = await userManager.GenerateEmailConfirmationTokenAsync(user);
         var encodedToken = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
 
         var request = httpContextAccessor.HttpContext!.Request;
-        var confirmationLink =
-            $"{request.Scheme}://{request.Host}/api/auth/confirm-email?userId={Uri.EscapeDataString(user.Id)}&token={Uri.EscapeDataString(encodedToken)}";
+        return $"{request.Scheme}://{request.Host}/api/auth/confirm-email?userId={Uri.EscapeDataString(user.Id)}&token={Uri.EscapeDataString(encodedToken)}";
+    }
 
+    // Used by ResendConfirmationEmailAsync only - unchanged synchronous SMTP send, out of this task's scope.
+    private async Task SendConfirmationEmailAsync(ApplicationUser user)
+    {
+        var confirmationLink = await BuildConfirmationLinkAsync(user);
         await emailSender.SendConfirmationLinkAsync(user, user.Email!, confirmationLink);
+    }
+
+    // Registration path: queues the email in the outbox instead of sending it inline, so the caller
+    // gets Result<RegisteredUserDto>.Success once the transaction below commits, not once SMTP replies.
+    private async Task EnqueueConfirmationEmailAsync(ApplicationUser user, CancellationToken ct)
+    {
+        var confirmationLink = await BuildConfirmationLinkAsync(user);
+
+        RegistrationConfirmationEvent evt = new(Guid.CreateVersion7(), user.Id, user.Email!, confirmationLink);
+
+        RegistrationOutboxMessage outboxMessage = new()
+        {
+            Id = evt.NotificationId,
+            UserId = user.Id,
+            Payload = JsonSerializer.Serialize(evt),
+            CreatedAtUtc = clock.GetUtcNow(),
+        };
+
+        await patientBookingDbContext.AddAsync(outboxMessage, ct);
     }
 
     public async Task<Result<LoginResponseDto>> LoginAsync(LoginUserDto loginUserDto, CancellationToken ct)

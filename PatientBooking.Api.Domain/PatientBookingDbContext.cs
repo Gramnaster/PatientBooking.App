@@ -23,6 +23,8 @@ public class PatientBookingDbContext(
     public DbSet<BookingLineItem> BookingLineItems { get; set; } = null!;
     public DbSet<BookingOutboxMessage> BookingOutboxMessages { get; set; } = null!;
     public DbSet<SentBookingNotification> SentBookingNotifications { get; set; } = null!;
+    public DbSet<RegistrationOutboxMessage> RegistrationOutboxMessages { get; set; } = null!;
+    public DbSet<SentRegistrationNotification> SentRegistrationNotifications { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
