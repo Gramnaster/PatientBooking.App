@@ -346,7 +346,7 @@ try
     app.UseExceptionHandler();
 
     // Identity's built-in endpoints need different prefix or the two will collide
-    app.MapGroup("api/defaultauth").MapIdentityApi<ApplicationUser>();
+    app.MapGroup("api/defaultauth").ExcludeFromDescription().MapIdentityApi<ApplicationUser>();
 
     // Configure the HTTP request pipeline.
     // Public in every environment, not just Development - solo project, doubles as API docs.
