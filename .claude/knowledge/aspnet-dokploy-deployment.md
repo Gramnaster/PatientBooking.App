@@ -186,8 +186,26 @@ The policy body now also sets `dead-letter-strategy: at-least-once` and `overflo
 (see `docs/deployment.md`'s RabbitMQ section for the full command and reasoning) - without these,
 the default `at-most-once` dead-lettering can silently lose a message during the hand-off to
 `booking-confirmed.failed` if that queue is briefly unreachable, which defeats the point of a
-poison-message queue. Verified against current RabbitMQ docs (quorum-queues#dead-lettering). `PatientBooking.Api.Tests`
-covers retry exhaustion into `booking-confirmed.failed` under this policy end-to-end, but not the
-specific "dead-letter target briefly unreachable, then recovers" path - simulating that needs the
-failed queue itself to go away and come back mid-test, which wasn't worth the added complexity for
-a personal project. That specific claim rests on the RabbitMQ docs citation above, not a local repro.
+poison-message queue. Verified against current RabbitMQ docs (quorum-queues#dead-lettering).
+`PatientBooking.Api.Tests` covers retry exhaustion into `booking-confirmed.failed` end-to-end, and
+now also the "dead-letter target unavailable, then recovers" path itself
+(`HandleDeliveryAsync_DeadLetterDestinationUnavailableThenRecovers_MessageSurvivesAndEventuallyArrives`)
+- simulated by putting a 0-length `overflow: reject-publish` policy on `booking-confirmed.failed`
+itself rather than taking any container down, since the failed queue lives on the same broker
+process as `booking-confirmed` and can't be independently stopped. This is RabbitMQ's own
+documented way to force a target queue to reject every enqueue
+(quorum-queues#dead-lettering's "push back" wording).
+
+Recovery from `booking-confirmed.failed` is manual in all cases, including a SQL Server outage long
+enough to exhaust the 3-attempt delivery limit - nothing in `Program.cs` consumes that queue. See
+`docs/deployment.md`'s "Recovery from booking-confirmed.failed is manual, not automatic" section for
+the exact management-UI replay procedure (get-message-then-republish, no Shovel plugin).
+
+### RabbitMQ image pinned to 4.3.4 (2026-09-10)
+
+`rabbitmq:4-management-alpine` is a floating tag - it moved from resolving to RabbitMQ 4.3.4 to
+4.3.5 during this project's own development, confirmed by re-pulling it and running
+`rabbitmqctl version` before and after. All three references (`docker-compose.yml`,
+`docker/dev.compose.yaml`, `MessagingTestFixture.cs`) now pin `rabbitmq:4.3.4-management-alpine`
+explicitly, so deploy and tests stay on the exact version they were verified against until someone
+deliberately bumps it.

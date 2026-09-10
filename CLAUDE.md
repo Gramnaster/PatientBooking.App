@@ -183,13 +183,18 @@ For deployment, Docker/Dokploy troubleshooting, or deployed database migrations,
 and the [deployment runbook](docs/deployment.md). Preserve the documented manual migration
 workflow and distinguish verified local configuration from remote deployment assumptions.
 
+For RabbitMQ, outbox, consumer retries, or background email work, read
+[RabbitMQ email delivery knowledge](.claude/knowledge/rabbitmq-email-delivery.md).
+Preserve its failure-handling lessons and distinguish booking notifications from the
+still-separate Identity email flows.
+
 | Concern | Choice | Notes |
 |---|---|---|
 | Database | SQL Server via EF Core | `Microsoft.EntityFrameworkCore.SqlServer`, `Microsoft.Data.SqlClient` |
 | Raw SQL | Dapper | Alongside EF Core in `Api.Application` — use for reporting/complex reads only, not CRUD |
 | Auth | JWT Bearer + ASP.NET Identity (EF Core store) + Google OAuth | `Microsoft.AspNetCore.Authentication.JwtBearer`, `Microsoft.AspNetCore.Identity.EntityFrameworkCore`, `Google.Apis.Auth`, `System.IdentityModel.Tokens.Jwt` |
 | Caching | `Microsoft.Extensions.Caching.Hybrid` (HybridCache) | Matches `performance.md` — use over `IMemoryCache` directly |
-| Messaging | `RabbitMQ.Client` (raw) | No Wolverine/MassTransit wrapper yet — if outbox/saga patterns become necessary, evaluate the `messaging` skill before hand-rolling |
+| Messaging | `RabbitMQ.Client` (raw) | Booking transactional outbox, confirmed publishing, and consumer deduplication; see RabbitMQ knowledge above for guarantees and limits |
 | Mapping | Riok.Mapperly (source generator) | Not AutoMapper — compile-time, no reflection |
 | Validation | FluentValidation | Per `error-handling.md` — validate at the API boundary |
 | Email | MailKit / MimeKit | |
@@ -214,9 +219,10 @@ reviewer to catch drift.
 
 ## Testing
 
-No test project exists yet. Per `testing.md`: xUnit v3 + `WebApplicationFactory` + Testcontainers
-(real SQL Server container, not `UseInMemoryDatabase`) is the default — confirm this is still
-correct when the first test project is scaffolded rather than assuming silently.
+`PatientBooking.Api.Tests` contains xUnit v3 messaging tests using Testcontainers with
+real SQL Server, RabbitMQ, and smtp4dev. See RabbitMQ knowledge above for coverage,
+runner lessons, and verification gaps. These worker tests do not establish HTTP endpoint
+coverage; use `WebApplicationFactory` when endpoint-level verification is needed.
 
 ## MCP Setup
 

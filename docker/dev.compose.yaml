@@ -69,7 +69,8 @@ services:
       - "${SMTP_UI_PORT:-5000}:80"
 
   rabbitmq:
-    image: rabbitmq:4-management-alpine
+    # Pinned to match docker-compose.yml and PatientBooking.Api.Tests - see the comment there.
+    image: rabbitmq:4.3.4-management-alpine
     profiles: ["rabbitmq"]
     restart: unless-stopped
     environment:

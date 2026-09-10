@@ -1,7 +1,9 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 using Microsoft.AspNetCore.Identity;
@@ -41,7 +43,10 @@ public sealed class MessagingTestFixture : IAsyncLifetime
 
     private readonly MsSqlContainer sqlContainer = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest").Build();
 
-    private readonly RabbitMqContainer rabbitContainer = new RabbitMqBuilder("rabbitmq:4-management-alpine")
+    // Pinned to match docker-compose.yml/docker/dev.compose.yaml - the floating "4-management-alpine"
+    // tag moved from 4.3.4 to 4.3.5 mid-development of this suite, so testing against it is testing
+    // against a moving target. Bump this and the two Compose files together, deliberately.
+    private readonly RabbitMqContainer rabbitContainer = new RabbitMqBuilder("rabbitmq:4.3.4-management-alpine")
         .WithUsername(RabbitMqUser)
         .WithPassword(RabbitMqPassword)
         .WithPortBinding(RabbitMqManagementPort, true)
@@ -226,6 +231,51 @@ public sealed class MessagingTestFixture : IAsyncLifetime
         }
 
         return count;
+    }
+
+    // Simulates the dead-letter destination being unavailable, per RabbitMQ's own recommended way to
+    // exercise at-least-once dead-lettering: https://www.rabbitmq.com/docs/quorum-queues#dead-lettering
+    // says the target can "push back" by rejecting an enqueue (e.g. reaching max-length with
+    // overflow: reject-publish), which is exactly what a 0-length policy on the queue itself forces
+    // for every publish attempt, including internal dead-letter routing. There's no way to take just
+    // booking-confirmed.failed offline via container control - it lives on the same broker process as
+    // booking-confirmed.
+    private const string FailedQueueOutagePolicyName = "booking-confirmed-failed-outage-test";
+
+    public async Task BlockFailedQueueAsync(CancellationToken ct)
+    {
+        Dictionary<string, object> definition = new(StringComparer.Ordinal)
+        {
+            ["max-length"] = 0,
+            ["overflow"] = "reject-publish",
+        };
+        Dictionary<string, object> policy = new(StringComparer.Ordinal)
+        {
+            ["pattern"] = $"^{Regex.Escape(RabbitMqBookingEventPublisher.FailedQueueName)}$",
+            ["definition"] = definition,
+            ["apply-to"] = "queues",
+        };
+
+        using StringContent content = new(JsonSerializer.Serialize(policy), Encoding.UTF8, "application/json");
+        using HttpResponseMessage response = await rabbitMqManagementApi.PutAsync(
+            $"/api/policies/%2f/{FailedQueueOutagePolicyName}",
+            content,
+            ct
+        );
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task UnblockFailedQueueAsync(CancellationToken ct)
+    {
+        using HttpResponseMessage response = await rabbitMqManagementApi.DeleteAsync(
+            $"/api/policies/%2f/{FailedQueueOutagePolicyName}",
+            ct
+        );
+
+        if (response.StatusCode != HttpStatusCode.NotFound)
+        {
+            response.EnsureSuccessStatusCode();
+        }
     }
 
     public async Task<long> GetFailedQueueMessageCountAsync(CancellationToken ct)

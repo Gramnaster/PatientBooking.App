@@ -25,7 +25,11 @@ services:
       start_period: 20s
 
   rabbitmq:
-    image: rabbitmq:4-management-alpine
+    # Pinned to the version actually exercised by PatientBooking.Api.Tests - the floating
+    # "4-management-alpine" tag moves underneath us (it advanced from 4.3.4 to 4.3.5 mid-development
+    # of that test suite). Bump deliberately, in step with the pin in MessagingTestFixture.cs and
+    # docker/dev.compose.yaml, not by re-pulling this tag.
+    image: rabbitmq:4.3.4-management-alpine
     restart: unless-stopped
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}

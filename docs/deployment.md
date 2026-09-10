@@ -126,3 +126,32 @@ durable `booking-confirmed.failed` queue (declared automatically by the app, sam
 queue) with full `x-death` history for diagnosis - see
 [RabbitMQ's dead-lettering docs](https://www.rabbitmq.com/docs/dlx) and
 [quorum queue delivery limits](https://www.rabbitmq.com/docs/quorum-queues#poison-message-handling).
+
+### Recovery from `booking-confirmed.failed` is manual, not automatic
+
+If SQL Server stays unavailable long enough for a delivery to exhaust its 3 attempts (each retry
+waits 1 second plus reject/redeliver latency, so this takes on the order of seconds, not minutes),
+the confirmation lands in `booking-confirmed.failed` even though the underlying cause was transient
+and would have succeeded on a later retry. Nothing consumes `booking-confirmed.failed` - `Program.cs`
+registers exactly two hosted services, `BookingConfirmationConsumer` (reads `booking-confirmed` only)
+and `BookingOutboxDispatcher` - so a message that lands there stays there until someone replays it by
+hand.
+
+To replay a message once the underlying problem (SQL Server, SMTP, etc.) is fixed, from the
+management UI (`http://localhost:15672` through the SSH tunnel above):
+
+1. Open the `booking-confirmed.failed` queue's page and use **Get Message(s)** with **Ack Mode**
+   set to "Nack message requeue false" - this removes the message from the failed queue and shows
+   its payload as text. Requeuing it back onto the same queue does nothing useful here.
+2. Copy the **Payload** value exactly (it's already the same JSON the consumer deserializes).
+3. Open the `booking-confirmed` queue's page and use **Publish message**, leaving **Exchange**
+   blank (the default exchange) and setting **Routing key** to `booking-confirmed`, then paste the
+   payload back in and publish.
+4. Confirm the consumer picked it up: the message count on `booking-confirmed` returns to 0 and a
+   new row appears in `SentBookingNotifications` for that booking.
+
+This is a manual, one-message-at-a-time procedure appropriate for this project's volume - it does
+not use the Shovel plugin or `rabbitmqadmin` scripting, since neither is otherwise part of this
+deployment. Redelivering through the same dedup path is safe even if the original send actually did
+go through before failing later in the pipeline: `HandleDeliveryAsync`'s `SentBookingNotifications`
+check skips sending again.

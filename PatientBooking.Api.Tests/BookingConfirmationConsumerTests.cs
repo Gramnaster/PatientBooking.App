@@ -334,6 +334,50 @@ public sealed class BookingConfirmationConsumerTests(MessagingTestFixture fixtur
         }
     }
 
+    [Fact]
+    public async Task HandleDeliveryAsync_DeadLetterDestinationUnavailableThenRecovers_MessageSurvivesAndEventuallyArrives()
+    {
+        using CancellationTokenSource cts = new(TimeSpan.FromSeconds(60));
+        CancellationToken ct = cts.Token;
+
+        // Malformed payload dead-letters immediately (requeue:false) rather than waiting out the
+        // 3-attempt delivery limit - the outage being tested is the destination's, not the source's.
+        BookingConfirmedEvent evt = BuildEvent(patientEmail: "");
+
+        await using ServiceProvider provider = fixture.CreateServiceProvider();
+        var consumer = provider.GetRequiredService<BookingConfirmationConsumer>();
+        await consumer.StartAsync(ct);
+
+        try
+        {
+            await fixture.BlockFailedQueueAsync(ct);
+
+            long before = await fixture.GetFailedQueueMessageCountAsync(ct);
+            await fixture.PublishRawAsync(evt, ct);
+
+            // While the destination rejects every enqueue, at-least-once dead-lettering must retry
+            // rather than drop the message - the failed queue's count should stay put, not silently
+            // lose the message.
+            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+            Assert.Equal(before, await fixture.GetFailedQueueMessageCountAsync(ct));
+
+            await fixture.UnblockFailedQueueAsync(ct);
+
+            bool arrived = await WaitUntilAsync(
+                async () => await fixture.GetFailedQueueMessageCountAsync(ct) > before,
+                TimeSpan.FromSeconds(30),
+                ct
+            );
+
+            Assert.True(arrived, "Message should survive the destination outage and eventually reach booking-confirmed.failed once it recovers.");
+        }
+        finally
+        {
+            await consumer.StopAsync(CancellationToken.None);
+            await fixture.UnblockFailedQueueAsync(CancellationToken.None);
+        }
+    }
+
     private static string UniqueEmail() => $"patient-{Guid.NewGuid():N}@patientbooking.test";
 
     private static BookingConfirmedEvent BuildEvent(string patientEmail) =>
