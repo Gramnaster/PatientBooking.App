@@ -81,7 +81,37 @@ port publicly:
 ssh -L 15672:localhost:15672 <user>@<vps-host>
 ```
 
-Then browse `http://localhost:15672` and sign in with `RABBITMQ_USER`/`RABBITMQ_PASSWORD`.
+Then browse `http://localhost:15672` and sign in with a broker operator account that has
+a management tag and the required vhost permissions. An untagged application account
+cannot log into this UI, even when its API connection works. See
+[management permissions](https://www.rabbitmq.com/docs/management#permissions).
+
+### Existing-broker account setup
+
+Changing default-user environment variables does not update users in an existing broker volume.
+If only `guest` exists, run these commands in Dokploy's **RabbitMQ container terminal**:
+
+```sh
+rabbitmqctl list_users
+rabbitmqctl add_user patientbooking 'REPLACE_WITH_GENERATED_PASSWORD'
+rabbitmqctl set_permissions -p / patientbooking ".*" ".*" ".*"
+```
+
+Use a long, randomly generated alphanumeric password to avoid shell quoting mistakes.
+Run `add_user` only if that user is missing. This creates an application account without
+management privileges, with configure/write/read access to all resources in `/`.
+
+Set the matching values in Dokploy's Compose **Environment** editor:
+
+```dotenv
+RABBITMQ_USER=patientbooking
+RABBITMQ_PASSWORD='REPLACE_WITH_THE_SAME_PASSWORD'
+```
+
+Save and redeploy. Check API logs for successful broker connectivity and verify a booking
+notification. Account setup is one-time while `rabbitmq-data` persists; do not delete the
+volume to fix credentials. Never paste the real password into committed documentation.
+See [RabbitMQ user management](https://www.rabbitmq.com/docs/access-control#user-management).
 
 The API starts and keeps serving bookings even if the broker is down or not yet deployed -
 confirmation emails queue up in the database outbox and get delivered once the broker's reachable.

@@ -123,6 +123,36 @@ Keep command maintenance there rather than copying a second runsheet into this f
 - API startup uses `service_started` for RabbitMQ so broker health is not a prerequisite
   to serving bookings with a working database/outbox.
 
+## Broker accounts and Dokploy credentials
+
+- These accounts belong to the RabbitMQ broker on the VPS, not rabbitmq.com, Dokploy,
+  or ASP.NET Identity. Generate a private password; there is no website signup.
+- On 2026-09-10, the user reported `rabbitmqctl list_users` showing only
+  `guest [administrator]`. Deployment logs also reported missing `RABBITMQ_USER` and
+  `RABBITMQ_PASSWORD`. Account creation and successful API authentication were advised,
+  but have not yet been confirmed by the user.
+- Dokploy's Compose Environment supplies `RABBITMQ_USER`/`RABBITMQ_PASSWORD` to both
+  broker default-user settings and API connection settings. Missing-variable warnings
+  mean credentials need attention even when the image builds successfully.
+- Default-user settings seed an empty broker. Changing them on an existing persisted
+  broker does not create an account or rotate its password. Inspect users first; create
+  the missing application user and grant permissions on `/` using the runbook below.
+  Keep its password identical to the Dokploy value, then redeploy the API.
+- Accounts and permissions persist in `rabbitmq-data`. Do not delete that volume to
+  repair credentials: it also holds broker data. Rotate an existing user's password
+  explicitly and update Dokploy together.
+- The application account needs configure/write/read permissions for its topology,
+  not an administrator tag. Untagged users cannot sign into the management UI.
+  Use a separate operator account with the appropriate management tag and vhost
+  permissions. An SSH tunnel provides connectivity, not authentication or permission.
+- Do not use `guest` for the API or disable its default loopback restriction to make
+  container-to-container login work. Never store actual passwords in knowledge files,
+  source control, or chat.
+
+Sources: [RabbitMQ access control](https://www.rabbitmq.com/docs/access-control),
+[management permissions](https://www.rabbitmq.com/docs/management#permissions).
+Commands: [existing-broker account setup](../../docs/deployment.md#existing-broker-account-setup).
+
 ## Verification lessons and remaining checks
 
 The eight checked-in tests cover outbox dispatch, duplicate redelivery, recovery after
