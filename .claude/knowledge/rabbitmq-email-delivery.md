@@ -100,28 +100,33 @@ copies every row from both old `Sent*Notifications` tables into the new
 `SentEmailNotifications` (matched by `Id`, idempotent) so a legacy notification ID that
 somehow gets replayed later is still recognized as already-sent. See
 [the deployment runbook](../../docs/deployment.md#one-time-migration-cutover-from-the-old-per-domain-pipelines-this-deploy-only)
-for the exact nine-step sequence: block new writes at the VPS firewall (`ufw`), not by
-disabling the API's Dokploy domain and not by stopping the container - for a Compose-deployed
-app, Dokploy only applies a domain change on redeploy (confirmed against Dokploy's own docs;
-it is not hot-reloaded the way a single-image Application's domain is), and a redeploy would
-both rebuild the `api` container (killing the old dispatcher/consumer still draining it -
-they run in-process inside the API, not as separate workers) and risk starting the new
-pipeline's code before the migration/policy are ready. Then drain both old outboxes and
-confirm both `messages_ready` **and** `messages_unacknowledged` are zero on both old queues
-(not `messages_ready` alone - a message can be delivered-but-unacked to an old consumer and
-still not show up there), replay anything worth keeping in the old failed queues, repeat the
+for the exact step sequence: block new writes at the VPS's `DOCKER-USER` iptables/ip6tables
+chain (not a plain `ufw deny` - Docker's published-port traffic bypasses ufw's `INPUT`/`OUTPUT`
+chains entirely, confirmed against Docker's own firewall docs), not by disabling the API's
+Dokploy domain and not by stopping the container - for a Compose-deployed app, Dokploy only
+applies a domain change on redeploy (confirmed against Dokploy's own docs; it is not
+hot-reloaded the way a single-image Application's domain is), and a redeploy would both
+rebuild the `api` container (killing the old dispatcher/consumer still draining it - they run
+in-process inside the API, not as separate workers) and risk starting the new pipeline's code
+before the migration/policy are ready. Then drain both old outboxes and confirm both
+`messages_ready` **and** `messages_unacknowledged` are zero on both old queues (not
+`messages_ready` alone - a message can be delivered-but-unacked to an old consumer and still
+not show up there), replay anything worth keeping in the old failed queues, repeat the
 drain/queue checks once more immediately before stopping the old API, then run the migration
-and apply the new broker policy via the `migrator` Compose service with no API instance
-running at all before starting the new one - the only way to guarantee
-`EmailOutboxDispatcher`/`EmailDeliveryConsumer` never run against a not-yet-migrated
-schema or not-yet-policied queue, since nothing in `Program.cs` gates their startup on
-either. Because Dokploy's Deploy button always fetches code and starts `api` together with
-no way to decouple them, getting the new commit onto disk before running the migrator uses
-`git` directly against Dokploy's own checkout directory, then starts `api` with a direct
-`docker compose up -d --build` rather than through Dokploy's Deploy button. A documented
-maintenance-window cutover was chosen over a dual-running compatibility shim, since this is
-a solo, low-volume application and rolling-upgrade support would be meaningfully more complex
-than the traffic justifies. Do not reintroduce that complexity without a concrete need.
+and apply the new broker policy with no API instance running at all before starting the new
+one - the only way to guarantee `EmailOutboxDispatcher`/`EmailDeliveryConsumer` never run
+against a not-yet-migrated schema or not-yet-policied queue, since nothing in `Program.cs`
+gates their startup on either. Because Dokploy's Deploy button always fetches code and starts
+`api` together with no way to decouple them, and because Dokploy generates that deploy's
+Traefik labels itself (a manual `git reset --hard` plus a raw `docker compose up` bypasses that
+generation entirely - see [deployment knowledge](aspnet-dokploy-deployment.md) for the
+confirmation), both the migration step and the final API start go through Dokploy's own Deploy
+button, temporarily swapping its Compose Advanced-tab Custom Command for the migrator-only step.
+Dokploy also has no way to pin an exact commit SHA, so the runbook disables Dokploy's Auto
+Deploy toggle for the cutover's duration instead. A documented maintenance-window cutover was
+chosen over a dual-running compatibility shim, since this is a solo, low-volume application and
+rolling-upgrade support would be meaningfully more complex than the traffic justifies. Do not
+reintroduce that complexity without a concrete need.
 
 ### Contributor example: adding a new ordinary email type
 

@@ -282,3 +282,47 @@ decouple the two through Dokploy alone. The runbook now advances that checkout d
 migrate-then-start ordering is guaranteed rather than assumed. Not verified on the real VPS -
 the working-directory/project-name discovery via `docker inspect`'s Compose labels, and the
 git/`docker compose` sequence built on it, are documented procedure only.
+
+### Both the firewall mechanism and the raw-git/raw-compose sequencing above were wrong (2026-09-10)
+
+A second review (before any VPS execution) found three real problems with the entry directly
+above, none of them about the email architecture:
+
+1. **`ufw deny` does not reliably block Docker-published ports.** Docker manages its own
+   `iptables`/`ip6tables` rules for published ports and routes that traffic through the `nat`
+   table and `FORWARD` chain, ahead of - and bypassing - the `INPUT`/`OUTPUT` chains ufw
+   controls. Confirmed against
+   [Docker's own packet-filtering documentation](https://docs.docker.com/engine/network/packet-filtering-firewalls/):
+   "Docker routes container traffic in the `nat` table, which means that packets are diverted
+   before it reaches the `INPUT` and `OUTPUT` chains that ufw uses." The runbook's step 1 now
+   uses the `DOCKER-USER` iptables/ip6tables chain instead - Docker's own documented hook for
+   filtering published-port traffic, applied `-i <ext-if>` so loopback/SSH-tunnel/internal
+   traffic is untouched. This also folds the previously-separate port-8080 check into the same
+   mechanism as the domain block, rather than treating them as two different problems.
+2. **`git reset --hard` in Dokploy's working directory silently destroys the Traefik labels
+   Dokploy generates for that deploy.** Confirmed against
+   [Dokploy's own docs](https://docs.dokploy.com/docs/core/docker-compose): "All label
+   generation... is handled automatically by Dokploy," and Dokploy does not support a
+   `docker-compose.override.yml` - it modifies the one compose spec it deploys, on every deploy,
+   from the Domains-tab configuration. A manual `git reset --hard` plus a raw `docker compose up`
+   run outside Dokploy's own pipeline never re-triggers that label generation, so the very next
+   time `api` actually starts this way, the domain silently stops routing to it. The runbook now
+   advances the checkout and starts `api` through Dokploy's own Deploy button both times,
+   temporarily swapping the Compose **Advanced** tab's **Custom Command** override for the
+   migrator-only step so Dokploy's own git-pull and label-generation logic still runs - existing,
+   documented Dokploy tooling, not a new mechanism.
+3. **`docker compose start api` after `docker compose up --build` does not restore the old
+   version.** Confirmed against
+   [Compose's own `up` reference](https://docs.docker.com/reference/cli/docker/compose/up/):
+   recreating a service removes its previous container once the replacement is running, so the
+   container `stop`ped before the rebuild no longer exists afterward. The runbook now tags the
+   pre-cutover image explicitly (`docker tag ... patientbooking-api:pre-cutover-rollback`) before
+   anything is rebuilt, and its primary rollback path redeploys the old commit through Dokploy
+   itself (pinning a disposable git ref at the recorded old SHA) rather than restarting a
+   container that no longer exists - since Dokploy also has no way to deploy an exact commit SHA
+   ([open feature request, Dokploy#4147](https://github.com/Dokploy/dokploy/issues/4147)), the
+   runbook now also disables Dokploy's **Auto Deploy** toggle for the duration of the cutover so
+   nothing else can move the configured branch mid-window.
+
+Not verified on the real VPS - all three corrections are grounded in Docker's and Dokploy's own
+documentation plus this repo's actual `docker-compose.yml`, not in an actual run of the procedure.
