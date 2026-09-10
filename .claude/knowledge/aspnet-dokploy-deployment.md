@@ -152,10 +152,14 @@ before prescribing version-sensitive commands or Dokploy UI steps.
 
 ## RabbitMQ added to Compose (2026-09-09)
 
-`docker-compose.yml` gained a `rabbitmq` service (`rabbitmq:4-management-alpine`, no host ports,
-named volume `rabbitmq-data`, healthcheck via `rabbitmq-diagnostics check_port_connectivity`,
-credentials via `RABBITMQ_USER`/`RABBITMQ_PASSWORD`) - this is the first time RabbitMQ enters this
-file, so there is no existing-queue-argument conflict to account for on the deploy path.
+`docker-compose.yml` gained a `rabbitmq` service (`rabbitmq:4-management-alpine`, named volume
+`rabbitmq-data`, healthcheck via `rabbitmq-diagnostics check_port_connectivity`, credentials via
+`RABBITMQ_USER`/`RABBITMQ_PASSWORD`) - this is the first time RabbitMQ enters this file, so there is
+no existing-queue-argument conflict to account for on the deploy path. AMQP (5672) has no host
+mapping; the management port (15672) is published loopback-only (`127.0.0.1:15672:15672`, added
+2026-09-10) so an SSH tunnel from the VPS's own terminal has a real destination without exposing
+anything on the public interface - the original doc's tunnel command targeted a port nothing
+published, so it could never have connected as written.
 
 The retry/dead-letter behavior for `booking-confirmed` (delivery-limit 3, dead-letter to
 `booking-confirmed.failed`) ships as a broker **policy**, applied once manually per broker via
@@ -175,3 +179,15 @@ Verified locally only: `rabbitmq:4-management-alpine` boots cleanly with `RABBIT
 `RABBITMQ_DEFAULT_PASS` and no definitions file, `rabbitmqctl set_policy` applies and is visible
 via `rabbitmqctl list_policies`. Not verified: this Compose service on the actual VPS/Dokploy, or
 the policy step run against a deployed broker.
+
+### Policy gained at-least-once dead-lettering (2026-09-10)
+
+The policy body now also sets `dead-letter-strategy: at-least-once` and `overflow: reject-publish`
+(see `docs/deployment.md`'s RabbitMQ section for the full command and reasoning) - without these,
+the default `at-most-once` dead-lettering can silently lose a message during the hand-off to
+`booking-confirmed.failed` if that queue is briefly unreachable, which defeats the point of a
+poison-message queue. Verified against current RabbitMQ docs (quorum-queues#dead-lettering). `PatientBooking.Api.Tests`
+covers retry exhaustion into `booking-confirmed.failed` under this policy end-to-end, but not the
+specific "dead-letter target briefly unreachable, then recovers" path - simulating that needs the
+failed queue itself to go away and come back mid-test, which wasn't worth the added complexity for
+a personal project. That specific claim rests on the RabbitMQ docs citation above, not a local repro.

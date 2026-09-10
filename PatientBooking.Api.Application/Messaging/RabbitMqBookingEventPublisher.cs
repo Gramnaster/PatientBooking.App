@@ -70,7 +70,10 @@ public sealed class RabbitMqBookingEventPublisher(
 
     // Declared defensively on every publish, same as the main queue always has been - cheap and
     // idempotent. The failed queue only needs to exist; its retry/dead-letter behavior comes from a
-    // broker policy (deploy/rabbitmq/definitions.json), not from arguments on booking-confirmed itself.
+    // broker policy applied once via rabbitmqctl set_policy (see docs/deployment.md's RabbitMQ
+    // section), not from arguments on booking-confirmed itself. Deliberately not a definitions.json
+    // boot-time import - see .claude/knowledge/aspnet-dokploy-deployment.md for why that breaks
+    // default user/vhost seeding.
     public static async Task DeclareTopologyAsync(IChannel channel, CancellationToken ct)
     {
         await channel.QueueDeclareAsync(

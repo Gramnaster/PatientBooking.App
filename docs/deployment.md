@@ -67,10 +67,13 @@ requires SDK/tooling and project files that are not included in this runtime ima
 
 Supply `RABBITMQ_USER` and `RABBITMQ_PASSWORD` in Dokploy's Compose **Environment** editor before
 first deploy - Compose maps them straight to the broker's `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS`
-and to the API's `RabbitMq__UserName`/`RabbitMq__Password`. Ports 5672 and 15672 have no host
-mapping, same as SQL Server - the API reaches the broker over the internal Compose network by
-service name, and the broker/management UI are never exposed publicly. For ad hoc inspection of
-queues, SSH-tunnel instead of opening a port:
+and to the API's `RabbitMq__UserName`/`RabbitMq__Password`. AMQP (5672) has no host mapping, same as
+SQL Server - the API reaches the broker over the internal Compose network by service name and never
+needs a published port. The management UI (15672) is published loopback-only
+(`127.0.0.1:15672:15672`) so it's reachable through an SSH tunnel but never from the public
+interface - binding to `127.0.0.1` rather than `0.0.0.0` is what keeps it non-public even though a
+port is technically published. For ad hoc inspection of queues, SSH-tunnel instead of opening the
+port publicly:
 
 ```sh
 ssh -L 15672:localhost:15672 <user>@<vps-host>
@@ -93,12 +96,33 @@ container's terminal:
 
 ```sh
 rabbitmqctl set_policy booking-confirmed-retry-limit "^booking-confirmed$" \
-  '{"delivery-limit":3,"dead-letter-exchange":"booking-confirmed.dlx","dead-letter-routing-key":"booking-confirmed.failed"}' \
+  '{"delivery-limit":3,"dead-letter-exchange":"booking-confirmed.dlx","dead-letter-routing-key":"booking-confirmed.failed","dead-letter-strategy":"at-least-once","overflow":"reject-publish"}' \
   --apply-to queues
 ```
 
-Verify with `rabbitmqctl list_policies`. Messages that exhaust their 3 delivery attempts, or that
-fail to deserialize at all, land in the durable `booking-confirmed.failed` queue (declared
-automatically by the app, same as the main queue) with full `x-death` history for diagnosis - see
+`dead-letter-strategy: at-least-once` (quorum queues only) keeps a dead-lettered message in
+`booking-confirmed` until the broker confirms `booking-confirmed.failed` actually accepted it,
+retrying periodically if the failed queue is temporarily unreachable, instead of the default
+`at-most-once` behavior where a message can be lost during the hand-off. This mode requires
+`overflow: reject-publish` - the default `drop-head` overflow strategy silently defeats
+`at-least-once` even without a queue length limit set - and the `stream_queue` feature flag, which
+is enabled by default on a fresh `rabbitmq:4-management-alpine` broker (confirm with
+`rabbitmqctl list_feature_flags | grep stream_queue` if in doubt). See
+[quorum queue dead-lettering](https://www.rabbitmq.com/docs/quorum-queues#dead-lettering).
+
+Consider also setting `max-length` or `max-length-bytes` in the same policy body if
+`booking-confirmed.failed` is ever unreachable for an extended period - RabbitMQ recommends this to
+bound how much `booking-confirmed` can retain while retrying delivery to it. Not set here; pick a
+value against your actual message volume before adding it.
+
+Verify with `rabbitmqctl list_policies`, or per-queue via `rabbitmqctl list_queues name policy` or
+the management UI's queue detail page ("Effective policy definition"). To change an existing
+broker's policy later, re-run `set_policy` with the same name and the new JSON body - it replaces
+the definition in place; no queue redeclaration or restart is needed, and Compose's `--build`
+redeploys never touch this since it lives in the broker's own persisted metadata, not the image.
+
+Messages that exhaust their 3 delivery attempts, or that fail to deserialize at all, land in the
+durable `booking-confirmed.failed` queue (declared automatically by the app, same as the main
+queue) with full `x-death` history for diagnosis - see
 [RabbitMQ's dead-lettering docs](https://www.rabbitmq.com/docs/dlx) and
 [quorum queue delivery limits](https://www.rabbitmq.com/docs/quorum-queues#poison-message-handling).

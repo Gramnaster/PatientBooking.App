@@ -19,4 +19,11 @@ internal static partial class BookingConfirmationConsumerLoggerExtensions
 
     [LoggerMessage(EventId = 3210, Level = LogLevel.Warning, Message = "Consumer {ConsumerTag} was cancelled by the broker - redeclaring and resuming.")]
     public static partial void BookingConfirmationConsumerCancelled(this ILogger logger, string consumerTag);
+
+    [LoggerMessage(EventId = 3211, Level = LogLevel.Warning, Message = "Booking {BookingId} confirmed-message predates NotificationId - using derived dedup key {DedupKey}.")]
+    public static partial void BookingConfirmationLegacyMessageDetected(
+        this ILogger logger,
+        int bookingId,
+        Guid dedupKey
+    );
 }

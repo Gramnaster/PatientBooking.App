@@ -32,10 +32,13 @@ services:
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
-    # No host port mapping, same reasoning as sqlserver above - the api service reaches this over
-    # the internal Compose network by service name, and 5672/15672 never need to be public. For ad
-    # hoc management-UI access, SSH-tunnel instead: ssh -L 15672:localhost:15672 <user>@<vps-host>,
-    # then browse localhost:15672 - see docs/deployment.md.
+    ports:
+      # Loopback-only: bound to the VPS's own 127.0.0.1, never the public interface. AMQP (5672)
+      # stays unpublished entirely - the api service always reaches the broker over the internal
+      # Compose network by service name. For ad hoc management-UI access, SSH-tunnel instead:
+      # ssh -L 15672:localhost:15672 <user>@<vps-host>, then browse localhost:15672 - the tunnel
+      # now has something to actually connect to on the VPS side. See docs/deployment.md.
+      - "127.0.0.1:15672:15672"
     healthcheck:
       test: rabbitmq-diagnostics check_port_connectivity
       interval: 10s
