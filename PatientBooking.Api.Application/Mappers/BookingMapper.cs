@@ -11,6 +11,7 @@ internal static class BookingMapper
     public static IQueryable<GetBookingDto> ProjectToGetBookingDto(this IQueryable<Booking> query) =>
         query.Select(
             b => new GetBookingDto(
+                b.Id,
                 b.BookingNumber,
                 b.AppointmentStartUtc,
                 b.LineItems.Select(l => new GetBookingLineItemDto(l.Price, l.LineItemType)).ToList(),

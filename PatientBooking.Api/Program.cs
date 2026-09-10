@@ -388,3 +388,10 @@ finally
 {
     await Log.CloseAndFlushAsync();
 }
+
+// Exposes the top-level statements' compiler-generated Program class to WebApplicationFactory<Program> in tests.
+public partial class Program
+{
+    protected Program()
+    { }
+}
