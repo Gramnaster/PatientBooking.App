@@ -137,21 +137,38 @@ registers exactly two hosted services, `BookingConfirmationConsumer` (reads `boo
 and `BookingOutboxDispatcher` - so a message that lands there stays there until someone replays it by
 hand.
 
+The procedure below never removes a message from `booking-confirmed.failed` until its replay is
+confirmed to have worked. Get Message(s) with Ack Mode "Nack message requeue false" deletes on read
+- using that as the first step, before you know the republish succeeded, means a failed republish
+loses the message for good. Never use the queue's **Purge Messages** action for this: it discards
+every message in the queue with no replay at all.
+
 To replay a message once the underlying problem (SQL Server, SMTP, etc.) is fixed, from the
 management UI (`http://localhost:15672` through the SSH tunnel above):
 
 1. Open the `booking-confirmed.failed` queue's page and use **Get Message(s)** with **Ack Mode**
-   set to "Nack message requeue false" - this removes the message from the failed queue and shows
-   its payload as text. Requeuing it back onto the same queue does nothing useful here.
-2. Copy the **Payload** value exactly (it's already the same JSON the consumer deserializes).
+   set to "Nack message requeue true" - a non-destructive peek. The payload is shown and the
+   message is immediately put back on the queue, so nothing is lost if you stop here.
+2. Copy the **Payload** value exactly, and separately note its `notificationId` field. That field
+   is the exact value `HandleDeliveryAsync` writes as `SentBookingNotifications.Id`, so it is what
+   step 4 checks for and what step 5 uses to identify the message safely.
 3. Open the `booking-confirmed` queue's page and use **Publish message**, leaving **Exchange**
    blank (the default exchange) and setting **Routing key** to `booking-confirmed`, then paste the
-   payload back in and publish.
-4. Confirm the consumer picked it up: the message count on `booking-confirmed` returns to 0 and a
-   new row appears in `SentBookingNotifications` for that booking.
+   unmodified payload back in and publish.
+4. Confirm the republish actually worked before touching the failed queue: poll
+   `SentBookingNotifications` for a row whose `Id` equals the `notificationId` from step 2 (or
+   confirm the email itself arrived). Do not proceed to step 5 on a hunch - until that row appears,
+   the message is still safe in `booking-confirmed.failed` precisely because you haven't removed it.
+5. Only now remove the original. Use **Get Message(s)** with Ack Mode "Nack message requeue true"
+   once more to confirm the message currently at the head of the queue is still the one whose
+   `notificationId` you just confirmed processed - a different failure may have arrived at the head
+   in the meantime. If it matches, repeat **Get Message(s)**, this time with Ack Mode "Nack message
+   requeue false", to remove just that one message. If it doesn't match, leave it alone and handle
+   whichever message actually failed on its own turn instead of removing the wrong one.
 
 This is a manual, one-message-at-a-time procedure appropriate for this project's volume - it does
 not use the Shovel plugin or `rabbitmqadmin` scripting, since neither is otherwise part of this
 deployment. Redelivering through the same dedup path is safe even if the original send actually did
 go through before failing later in the pipeline: `HandleDeliveryAsync`'s `SentBookingNotifications`
-check skips sending again.
+check skips sending again, so a message that turns out to already be a duplicate produces no second
+email even after being replayed.

@@ -8,8 +8,11 @@ publishing, consumers, retry policy, or background email delivery.
 
 - Source inspected on the review date: publisher, consumer, dispatcher, booking and
   user services, test project, Compose, and deployment runbook.
-- Claude reported seven real-infrastructure tests passing twice against local SQL
-  Server, RabbitMQ, and smtp4dev. This knowledge-writing session did not rerun them.
+- Claude reported eight real-infrastructure tests passing against local SQL Server,
+  RabbitMQ, and smtp4dev, including a later-added test that blocks the failed queue with
+  a `max-length: 0`/`overflow: reject-publish` policy and confirms a message survives the
+  outage and eventually arrives once the policy is lifted. This knowledge-writing session
+  did not rerun them.
 - Local results do not verify the VPS, its effective broker policy, or its volumes.
 - Booking notifications use the outbox. Registration, confirmation resend, password
   reset, and login notifications must be traced separately. `UsersService` still
@@ -68,9 +71,11 @@ still bounds attempts. `basic.nack(requeue: false)` remains appropriate for imme
 dead-lettering of malformed input. Verify semantics against the actual broker version:
 [quorum poison-message handling](https://www.rabbitmq.com/docs/quorum-queues#poison-message-handling).
 
-The earlier local verification reported RabbitMQ 4.3.4. Compose currently uses the
-floating `rabbitmq:4-management-alpine` tag. Pinning the tested version consistently in
-deployment and tests remains a follow-up, not a completed change.
+The earlier local verification reported RabbitMQ 4.3.4. `docker-compose.yml`,
+`docker/dev.compose.yaml`, and `MessagingTestFixture.cs` now pin `rabbitmq:4.3.4-management-alpine`
+instead of the floating `4-management-alpine` tag, after that floating tag was observed
+moving to 4.3.5 mid-development of this test suite. Bump the pin in all three places
+together, deliberately, rather than re-pulling the floating tag.
 
 ## Delivery guarantees and limits
 
@@ -85,8 +90,11 @@ deployment and tests remains a follow-up, not a completed change.
   sending cannot undo either email.
 - A prolonged SQL or SMTP outage can exhaust retries and send messages to the failed
   queue. Restoring the dependency does not automatically replay that queue in this app.
-  A bounded replay procedure is still to be documented and verified. Preserve IDs when
-  replaying and acknowledge the possibility of duplicate email after an ambiguous send.
+  A bounded, non-destructive replay procedure is now documented in the deployment
+  runbook: peek with requeue enabled, republish, confirm the `SentBookingNotifications`
+  row by `notificationId` before removing the original. It has not been exercised against
+  a real failed message. Preserve IDs when replaying and acknowledge the possibility of
+  duplicate email after an ambiguous send.
 - Review coordination before scaling API replicas: each instance hosts workers, and
   the current dispatcher does not claim rows with a distributed lease.
 
@@ -117,12 +125,14 @@ Keep command maintenance there rather than copying a second runsheet into this f
 
 ## Verification lessons and remaining checks
 
-The seven checked-in tests cover outbox dispatch, duplicate redelivery, recovery after
+The eight checked-in tests cover outbox dispatch, duplicate redelivery, recovery after
 a short SQL outage with five messages, duplicate-key exception classification, legacy
-deduplication, missing required fields, and permanent SMTP failure dead-lettering.
-The exception classification test performs successive inserts with two contexts; it
-does not prove concurrent full-pipeline behavior. Do not describe every test as an HTTP
-end-to-end test: these tests also exercise workers directly.
+deduplication, missing required fields, permanent SMTP failure dead-lettering, and the
+dead-letter destination becoming unavailable and then recovering (message survives the
+outage and eventually reaches `booking-confirmed.failed`). The exception classification
+test performs successive inserts with two contexts; it does not prove concurrent
+full-pipeline behavior. Do not describe every test as an HTTP end-to-end test: these
+tests also exercise workers directly.
 
 Reported harness lessons: under the selected xUnit v3/Microsoft.Testing.Platform runner,
 Claude used `--parallel none`; do not assume a copied runner JSON file enforces the
@@ -132,10 +142,12 @@ The fixture also applies exact recipient matching after smtp4dev's substring-bas
 
 Still unverified by the reported suite:
 
-1. Dead-letter destination unavailable, then restored, with eventual delivery verified.
-2. SQL outage long enough to exhaust retries, followed by failed-queue replay.
-3. Genuine concurrent duplicate-key race through the complete send/persist pipeline.
-4. Effective policy, port binding, migrations, and notification delivery on the VPS.
+1. SQL outage long enough to exhaust retries is confirmed by source inspection (no
+   hosted service reads `booking-confirmed.failed`) and its replay procedure is now
+   documented, but the procedure itself has not been exercised against a real failed
+   message.
+2. Genuine concurrent duplicate-key race through the complete send/persist pipeline.
+3. Effective policy, port binding, migrations, and notification delivery on the VPS.
 
 Keep tests isolated from normal development data and real recipients. When PostgreSQL
 replaces SQL Server, preserve the delivery design but replace provider-specific error
