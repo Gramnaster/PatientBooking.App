@@ -226,3 +226,26 @@ queue names. See
 [the deployment runbook](../../docs/deployment.md#one-time-migration-cutover-from-the-old-per-domain-pipelines-this-deploy-only)
 for the exact one-time cutover steps (drain both old outboxes/queues before deploying, apply the
 new policy, old tables retained as inert history). Not verified on the VPS - only locally.
+
+### Cutover procedure tightened: write-blocking, unacked counts, migrator-first sequencing (2026-09-10)
+
+The nine-step cutover in the runbook now does three things the original draft didn't:
+disables the old API's Dokploy domain first (not the container - the container must stay
+up so its own dispatcher/consumer finish draining), checks `messages_unacknowledged` on
+both old queues alongside `messages_ready` (a message delivered-but-unacked to an old
+consumer wouldn't show up in a ready-only check), and repeats the drain/queue checks a
+second time immediately before actually stopping the old API, since replaying old failed
+messages (step 4) itself changes queue state after the first check pass.
+
+It also changes *how* the migration and broker policy get applied: via the `migrator`
+Compose service (`docker compose ... run --build --rm migrator`, already defined for the
+"API cannot stay running" case) with the API container stopped, rather than running
+`--migrate` in the already-started new container's terminal. `Program.cs` has no gate that
+pauses `EmailOutboxDispatcher`/`EmailDeliveryConsumer` until migration completes - if the
+new container starts normally first, those hosted services immediately try to poll
+`EmailOutboxMessages` (which won't exist until migration runs) and consume `email-delivery`
+under whatever policy (or lack of one) the broker currently has. Running the migration and
+policy step with no API process running at all closes that gap entirely, using only tooling
+that already existed rather than a new code-level readiness gate. Not verified on the VPS -
+only locally, and only as a documented procedure (the actual `migrator` invocation against
+the real Dokploy Compose project has not been run by the agent).

@@ -183,35 +183,84 @@ application, the chosen transition is a **documented maintenance-window cutover*
 dual-running compatibility shim (rolling upgrade support would be meaningfully more complex than
 this app's traffic justifies).
 
-**Before deploying this version**, on the currently-running (old) deployment:
+**Step 1 - stop new writes, on the currently-running (old) deployment.** Draining and queue checks
+below are only meaningful against a system that has stopped accepting new bookings/registrations -
+otherwise a request that lands mid-check can re-populate what you just confirmed was empty. In
+Dokploy, remove or pause the API's domain in the **Domains** tab (or disable its Traefik router) -
+this immediately stops new inbound HTTP requests, including new booking/registration writes, while
+leaving the old container itself running so `BookingOutboxDispatcher`/`RegistrationOutboxDispatcher`
+and the old consumers keep draining whatever is already queued. Do not stop the old container at this
+step - that would kill the very dispatcher/consumer processes step 2 depends on to finish draining.
 
-1. Confirm both old outboxes have drained to zero pending rows (they normally do within seconds,
-   since `BookingOutboxDispatcher`/`RegistrationOutboxDispatcher` poll every 5s):
-   ```sql
-   SELECT COUNT(*) FROM BookingOutboxMessages WHERE DispatchedAtUtc IS NULL;
-   SELECT COUNT(*) FROM RegistrationOutboxMessages WHERE DispatchedAtUtc IS NULL;
-   ```
-   If either is non-zero, wait and recheck rather than proceeding - do not deploy while a row could
-   still be in flight, since nothing will dispatch it after this deploy replaces those dispatchers.
-2. Confirm both old queues show 0 **ready** messages in the management UI (or
-   `rabbitmqctl list_queues name messages_ready` filtered to `booking-confirmed` and
-   `registration-confirmation`). Under normal operation this is also near-instant, since the old
-   consumers process messages continuously.
-3. If either old **failed** queue (`booking-confirmed.failed` / `registration-confirmation.failed`)
-   holds messages you still intend to recover, replay them now using the existing procedure this
-   section used to document (peek non-destructively, republish to the *old* main queue, confirm the
-   old dedup table gained the row, only then remove the original) - **before** deploying, while the
-   old consumers are still running. After this deploy, nothing consumes `booking-confirmed` or
-   `registration-confirmation` any more, so a message republished to either old queue after this
-   point will not be delivered.
+**Step 2 - drain the old outboxes.** They normally clear within seconds, since
+`BookingOutboxDispatcher`/`RegistrationOutboxDispatcher` poll every 5s:
+```sql
+SELECT COUNT(*) FROM BookingOutboxMessages WHERE DispatchedAtUtc IS NULL;
+SELECT COUNT(*) FROM RegistrationOutboxMessages WHERE DispatchedAtUtc IS NULL;
+```
+If either is non-zero, wait and recheck rather than proceeding - do not continue while a row could
+still be in flight, since nothing will dispatch it after this deploy replaces those dispatchers.
 
-**Then deploy this version and apply the migration** (`dotnet PatientBooking.Api.dll --migrate`, per
-the "Apply migrations" section above). The migration:
+**Step 3 - confirm both old queues are actually empty, not just "ready" empty.** Check both
+`messages_ready` **and** `messages_unacknowledged` for `booking-confirmed` and
+`registration-confirmation` (management UI queue detail page, or
+`rabbitmqctl list_queues name messages_ready messages_unacknowledged` filtered to those two names).
+`messages_ready` alone can read 0 while a message is still `messages_unacknowledged` - delivered to
+an old consumer but not yet acked - which is not yet safe to treat as drained. Under normal operation
+both hit 0 near-instantly, since the old consumers process continuously and step 1 already stopped
+new writes.
+
+**Step 4 - resolve failed messages.** If either old **failed** queue (`booking-confirmed.failed` /
+`registration-confirmation.failed`) holds messages you still intend to recover, replay them now using
+the existing procedure this section used to document (peek non-destructively, republish to the *old*
+main queue, confirm the old dedup table gained the row, only then remove the original) - the old
+consumers must still be running for a replay to be processed at all. After this deploy, nothing
+consumes `booking-confirmed` or `registration-confirmation` any more, so a message republished to
+either old queue after that point will never be delivered.
+
+**Step 5 - repeat steps 2 and 3 once more, immediately before stopping the old API.** Replaying failed
+messages in step 4 itself publishes to the old main queues, and any check result is already stale by
+the time you act on it - a final confirmation pass, run right before you actually take the old API
+out of service, is what step 1's "prevent new writes" guarantee is actually for: it means this second
+pass should show the exact same zeros as the first, with nothing having snuck in between.
+
+**Step 6 - stop the old API.** Only now stop/remove the old container in Dokploy. Its dispatcher and
+consumers have finished their job (steps 2-5 confirmed nothing is left for them to do), and no new
+write can have arrived since step 1 disabled routing to it.
+
+**Step 7 - run the migration and apply the broker policy with no API instance running.** Doing this
+while the old container is stopped (step 6) and before the new one starts is what guarantees
+`EmailOutboxDispatcher`/`EmailDeliveryConsumer` never get a chance to run against a not-yet-migrated
+schema or a not-yet-policied queue - there is no code-level gate that pauses those hosted services
+until migration finishes, so the only way to eliminate that gap is to not have the API process
+running at all while these two steps happen. Use the `migrator` Compose service already defined for
+exactly this "API cannot/must not be running" case (see "Apply migrations" above), from the VPS host
+terminal with the actual deployed Compose project name and `.env`:
+```sh
+docker compose -p <project-name> --env-file .env -f ./docker-compose.yml run --build --rm migrator
+```
+This builds the same image containing the `ConsolidateEmailDelivery` migration and applies it (see
+"The migration" below), then exits - no other API process is up to race it. With migration applied,
+apply the new broker policy from the "Retry/dead-letter policy" section above
+(`email-delivery-retry-limit`), from the `rabbitmq` container's terminal, while the API is still down.
+
+**Step 8 - start the new API.** Deploy/restart the api service in Dokploy now that both the schema and
+the broker policy are already correct - `EmailOutboxDispatcher`/`EmailDeliveryConsumer`'s very first
+poll/consume cycle runs against fully-consistent state, with no window where they touch a stale
+schema or an unpolicied queue.
+
+**Step 9 - re-enable traffic.** Restore the domain/router disabled in step 1. Verify a booking or
+registration confirmation email actually arrives before considering the cutover complete.
+
+**The migration** (`dotnet PatientBooking.Api.dll --migrate`, applied in step 7):
 
 - Creates `EmailOutboxMessages` and `SentEmailNotifications`.
 - Copies every row from `SentBookingNotifications` and `SentRegistrationNotifications` into
   `SentEmailNotifications` (matched by `Id`, safe to re-run) - so a legacy notification ID that
-  somehow gets replayed later is still recognized as already-sent and skipped, not resent.
+  somehow gets replayed later is still recognized as already-sent and skipped, not resent. Verified
+  locally against populated old tables (including an `Id` present in both old dedup tables at once),
+  not just an empty schema - see `EmailDeliveryMigrationCompatibilityTests` in
+  `PatientBooking.Api.Tests`.
 - Does **not** drop `BookingOutboxMessages`, `RegistrationOutboxMessages`,
   `SentBookingNotifications`, or `SentRegistrationNotifications`. They are retained as an inert
   historical/audit record - nothing in the codebase reads or writes them after this migration. This
@@ -220,11 +269,9 @@ the "Apply migrations" section above). The migration:
   target that they are empty and no longer needed for audit - that is a follow-up you choose to make,
   not something this migration does automatically.
 
-**Apply the new broker policy** from the "Retry/dead-letter policy" section above
-(`email-delivery-retry-limit`). The old `booking-confirmed-retry-limit` /
-`registration-confirmation-retry-limit` policies can be left in place harmlessly (they apply to
-queues nothing publishes to any more) or removed with `rabbitmqctl clear_policy`; neither is required
-for the new pipeline to work.
+The old `booking-confirmed-retry-limit` / `registration-confirmation-retry-limit` broker policies can
+be left in place harmlessly after step 7 (they apply to queues nothing publishes to any more) or
+removed with `rabbitmqctl clear_policy`; neither is required for the new pipeline to work.
 
 ### Recovery from `email-delivery.failed` is manual, not automatic
 
