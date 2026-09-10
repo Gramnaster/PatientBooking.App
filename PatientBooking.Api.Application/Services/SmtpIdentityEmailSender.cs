@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Net.Sockets;
 using MailKit.Net.Smtp;
 using MailKit.Security;
@@ -69,9 +70,9 @@ public sealed class SmtpIdentityEmailSender(
         return SendEmailAsync(
             evt.PatientEmail,
             $"Booking confirmed - {evt.BookingNumber}",
-            $"Hi {evt.PatientFullName}, your booking {evt.BookingNumber} at {evt.ClinicName} is confirmed for" + string.Create(
+            string.Create(
                 CultureInfo.InvariantCulture,
-                $"{evt.AppointmentStartUtc:u} UTC. Total: {evt.TotalPrice:C}."
+                $"Hi {WebUtility.HtmlEncode(evt.PatientFullName)}, your booking {WebUtility.HtmlEncode(evt.BookingNumber)} at {WebUtility.HtmlEncode(evt.ClinicName)} is confirmed for {evt.AppointmentStartUtc.UtcDateTime:yyyy-MM-dd HH:mm} UTC. Total: PHP {evt.TotalPrice:N2}."
             ),
             ct
         );

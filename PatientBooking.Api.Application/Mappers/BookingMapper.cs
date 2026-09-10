@@ -17,8 +17,11 @@ internal static class BookingMapper
                 b.LineItems.Sum(l => l.Price),
                 b.Patient!.MedicalRecordNumber ?? string.Empty,
                 b.PatientId,
-                b.Patient!.User!.LastName + ", " + b.Patient.User.FirstName,
+                FormatPatientName(b.Patient!.User!.LastName, b.Patient.User.FirstName),
                 b.Clinic!.Name
             )
         );
+
+    // Run after materialization so EF decrypts each column before combining the names.
+    private static string FormatPatientName(string lastName, string firstName) => $"{lastName}, {firstName}";
 }
