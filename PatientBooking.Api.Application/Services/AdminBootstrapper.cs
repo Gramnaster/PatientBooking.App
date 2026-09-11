@@ -54,10 +54,7 @@ public static class AdminBootstrapper
 
         if (user is not null)
         {
-            logger.LogError(
-                "Admin bootstrap skipped: the configured email already belongs to a non-admin account. " +
-                    "Use an unused ADMIN_SEED_EMAIL and redeploy. The API will start without creating an admin."
-            );
+            logger.AdminBootstrapSkippedEmailInUse();
             return;
         }
 

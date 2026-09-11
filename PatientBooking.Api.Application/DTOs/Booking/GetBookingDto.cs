@@ -4,6 +4,7 @@ using System.Text;
 
 namespace PatientBooking.Api.Application.DTOs.Booking;
 
+/// <summary>A booking as returned to its owning patient.</summary>
 /// <param name="Id">
 /// The booking's own identifier. Pass this to <c>GET /api/Booking/{id}</c> and
 /// <c>DELETE /api/Booking/{id}</c> - not <paramref name="BookingNumber"/>, which resets per clinic
