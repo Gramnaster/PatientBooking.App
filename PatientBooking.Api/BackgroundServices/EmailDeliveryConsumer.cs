@@ -9,10 +9,6 @@ using RabbitMQ.Client.Events;
 
 namespace PatientBooking.Api.BackgroundServices;
 
-// Delivers every background-sent email (booking confirmation, registration confirmation, and any
-// future kind) through one shared confirmed-publish / manual-ack / retry / dead-letter / dedup
-// pipeline. This consumer never inspects Kind to rebuild per-feature logic - it only sends the
-// envelope's already-composed Subject/HtmlBody through the actual transport sender.
 public sealed class EmailDeliveryConsumer(
     RabbitMqConnectionProvider connectionProvider,
     IServiceScopeFactory scopeFactory,
@@ -20,6 +16,8 @@ public sealed class EmailDeliveryConsumer(
     ILogger<EmailDeliveryConsumer> logger
 ) : BackgroundService
 {
+    // Delivers every background email (booking/registration confirmation, any future kind) through
+    // one shared confirmed-publish / manual-ack / retry / dead-letter / dedup pipeline.
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan SendFailureDelay = TimeSpan.FromSeconds(1);
 
@@ -38,7 +36,7 @@ public sealed class EmailDeliveryConsumer(
 
             if (!stoppingToken.IsCancellationRequested)
             {
-                await Task.Delay(RetryDelay, stoppingToken).ConfigureAwait(false);
+                await Task.Delay(RetryDelay, clock, stoppingToken).ConfigureAwait(false);
             }
         }
     }
@@ -56,50 +54,42 @@ public sealed class EmailDeliveryConsumer(
         {
             await RabbitMqEmailPublisher.DeclareTopologyAsync(channel, ct);
 
-            // Some in-flight at once than unbounded.
-            // RabbitMQ pushes every waiting message to consumer with no prefetch limit set.
+            // Cap in-flight messages - without a prefetch limit RabbitMQ pushes everything at once.
             await channel.BasicQosAsync(prefetchSize: 0, prefetchCount: 5, global: false, cancellationToken: ct);
 
             AsyncEventingBasicConsumer consumer = new(channel);
             consumer.ReceivedAsync += async (_, ea) => await HandleDeliveryAsync(channel, ea, ct);
 
-            // BasicConsumeAsync returns once consumer is registered
-            // Stay here until shutdown, cancellation, or channel drops out from under us
+            // BasicConsumeAsync returns immediately - block here until shutdown, cancel, or channel loss.
             using CancellationTokenSource idleSignal = new();
             await using CancellationTokenRegistration registration = ct.Register(idleSignal.Cancel);
 
-            channel.ChannelShutdownAsync += (_, _) =>
+            channel.ChannelShutdownAsync += async (_, _) =>
             {
                 try
                 {
-                    idleSignal.Cancel();
+                    await idleSignal.CancelAsync();
                 }
                 catch (ObjectDisposedException)
                 {
                     // idleSignal already disposed
                 }
-
-                return Task.CompletedTask;
             };
 
-            // Fires for both a client-ack'd cancel and a broker-initiated basic.cancel - e.g. the
-            // queue was deleted while the connection stayed up. Automatic connection recovery can't
-            // fix this (the connection never dropped), so this is the one case that needs a manual
-            // restart: redeclare the queue and re-consume via the outer retry loop.
-            consumer.UnregisteredAsync += (_, ea) =>
+            consumer.UnregisteredAsync += async (_, ea) =>
             {
+                // Also fires on a broker basic.cancel (e.g. queue deleted) - connection recovery can't
+                // fix that, so this is the one case needing a manual restart via the outer retry loop.
                 logger.EmailConsumerCancelled(string.Join(',', ea.ConsumerTags));
 
                 try
                 {
-                    idleSignal.Cancel();
+                    await idleSignal.CancelAsync();
                 }
                 catch (ObjectDisposedException)
                 {
                     // idleSignal already disposed
                 }
-
-                return Task.CompletedTask;
             };
 
             await channel.BasicConsumeAsync(
@@ -111,7 +101,7 @@ public sealed class EmailDeliveryConsumer(
 
             try
             {
-                await Task.Delay(Timeout.InfiniteTimeSpan, idleSignal.Token);
+                await Task.Delay(Timeout.InfiniteTimeSpan, clock, idleSignal.Token);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -119,8 +109,7 @@ public sealed class EmailDeliveryConsumer(
             }
             catch (OperationCanceledException)
             {
-                // idleSignal fired because the channel shut down or the consumer was cancelled -
-                // fall through so outer loop retries with a fresh channel after RetryDelay
+                // idleSignal fired from a channel shutdown/consumer cancel - fall through, outer loop retries.
             }
         }
     }
@@ -150,12 +139,10 @@ public sealed class EmailDeliveryConsumer(
             return;
         }
 
-        // A message can sit in the queue for a while (broker/consumer downtime) - re-check expiry at
-        // send time too, not just at dispatch time, so a stale envelope is never sent nor recorded as
-        // sent. Dropped via a plain ack (not a dedup row): there is nothing to deduplicate against
-        // since it was never sent.
         if (evt.ExpiresAtUtc is { } expiresAtUtc && expiresAtUtc <= clock.GetUtcNow())
         {
+            // Re-checked here (not just at dispatch) so a stale envelope is never sent; plain ack, no
+            // dedup row, since it was never sent.
             logger.EmailMessageExpired(evt.NotificationId);
             await channel.BasicAckAsync(ea.DeliveryTag, multiple: false, ct);
             return;
@@ -163,10 +150,8 @@ public sealed class EmailDeliveryConsumer(
 
         try
         {
-            // Scope/DbContext resolution and the dedup lookup live inside this try, same as the
-            // send/save below - a DB outage here must not leave the delivery unacked forever. With
-            // prefetchCount 5, five unhandled exceptions from ReceivedAsync would wedge the channel
-            // even after SQL Server recovers, since RabbitMQ won't push more until those settle.
+            // DB and send both live in this try - at prefetchCount 5, unhandled exceptions here would
+            // wedge the channel since RabbitMQ won't push more until the backlog acks.
             await using AsyncServiceScope scope = scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<PatientBookingDbContext>();
 
@@ -188,32 +173,22 @@ public sealed class EmailDeliveryConsumer(
             }
             catch (DbUpdateException ex) when (ex.InnerException is SqlException { Number: 2627 or 2601 })
             {
-                // Genuine duplicate-key race: a concurrent redelivery beat us to recording this
-                // dedup row. The email already went out (by us or by it) either way, so ack rather
-                // than retry a send that already happened.
+                // Concurrent redelivery beat us to the dedup row - the email already went out either
+                // way, so ack rather than retry a send that already happened.
                 logger.EmailDuplicateSkipped(evt.NotificationId);
             }
 
-            // Reached on success and on a confirmed duplicate-key race. Any OTHER SaveChangesAsync
-            // failure (connection drop, timeout) is NOT caught above, so it propagates to the outer
-            // catch and gets retried - SMTP already succeeded at that point, so a retry resends the
-            // email. No transaction spans the SMTP send and the DB commit, so exactly-once delivery
-            // isn't achievable here; this trades a rare duplicate email for never silently losing the
-            // durable "sent" record.
+            // Reached on success or a confirmed dup-key race. Other SaveChangesAsync failures retry via
+            // the outer catch - no shared transaction, so a rare duplicate beats losing the sent record.
             await channel.BasicAckAsync(ea.DeliveryTag, multiple: false, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.EmailMessageHandlingFailed(ex);
 
-            // Short delay before the broker-counted redelivery, not a hand-rolled attempt counter -
-            // the email-delivery-retry-limit policy dead-letters to email-delivery.failed once
-            // RabbitMQ's own delivery-limit is exceeded. This must be basic.reject, not basic.nack -
-            // as of RabbitMQ 4.3, delivery-limit counts on delivery-count, and an explicit nack is
-            // treated as an unlimited application-level return that does NOT increment it (so it
-            // would requeue forever); only reject (or an actual consumer/channel/connection failure)
-            // counts as a real delivery attempt. https://www.rabbitmq.com/docs/quorum-queues#poison-message-handling
-            await Task.Delay(SendFailureDelay, ct);
+            // Delay before RabbitMQ's own delivery-limit retry. Must reject, not nack - nack doesn't
+            // count as a delivery attempt and would requeue forever (RabbitMQ 4.3 quorum queues).
+            await Task.Delay(SendFailureDelay, clock, ct);
 
             try
             {
@@ -230,9 +205,8 @@ public sealed class EmailDeliveryConsumer(
     {
         try
         {
-            // requeue:false is itself an immediate dead-letter reason, distinct from delivery-limit
-            // exhaustion - a malformed message goes straight to email-delivery.failed, no wasted
-            // retries on a payload that will never deserialize.
+            // requeue:false is its own immediate dead-letter reason (distinct from delivery-limit
+            // exhaustion) - a malformed message goes straight to email-delivery.failed, no wasted retries.
             await channel.BasicNackAsync(deliveryTag, multiple: false, requeue: false, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

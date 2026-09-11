@@ -110,7 +110,7 @@ public sealed class EmailDeliveryConsumerTests(MessagingTestFixture fixture)
             Assert.True(sent, "Expected at least one email to arrive.");
 
             // Grace period for a wrongly-duplicated send to show up before asserting the final count.
-            await Task.Delay(TimeSpan.FromSeconds(3), ct);
+            await Task.Delay(TimeSpan.FromSeconds(3), Clock, ct);
             Assert.Equal(1, await fixture.GetEmailCountAsync(email, ct));
 
             await using PatientBookingDbContext db = fixture.CreateRawDbContext();
@@ -146,7 +146,7 @@ public sealed class EmailDeliveryConsumerTests(MessagingTestFixture fixture)
                 await fixture.PublishRawEmailAsync(evt, ct);
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+            await Task.Delay(TimeSpan.FromSeconds(5), Clock, ct);
 
             await fixture.StartSqlServerAsync(ct);
             await fixture.WaitForSqlServerReadyAsync(ct);
@@ -303,7 +303,7 @@ public sealed class EmailDeliveryConsumerTests(MessagingTestFixture fixture)
             // The destination queue doesn't exist right now, so the dead-letter attempt has no route
             // at all - the message is held by the broker rather than delivered anywhere. The failed
             // queue's count should stay put, not silently lose the message.
-            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+            await Task.Delay(TimeSpan.FromSeconds(5), Clock, ct);
             Assert.Equal(before, await fixture.GetFailedQueueMessageCountAsync(ct));
 
             await fixture.UnblockFailedQueueAsync(ct);
@@ -351,7 +351,7 @@ public sealed class EmailDeliveryConsumerTests(MessagingTestFixture fixture)
 
             // No positive wait to assert on directly (there is nothing that ever becomes true) - give
             // the consumer a fixed window to have processed the message, then assert the negative.
-            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+            await Task.Delay(TimeSpan.FromSeconds(5), Clock, ct);
 
             Assert.Equal(0, await fixture.GetEmailCountAsync(email, ct));
 
@@ -388,7 +388,7 @@ public sealed class EmailDeliveryConsumerTests(MessagingTestFixture fixture)
                 return true;
             }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
+            await Task.Delay(TimeSpan.FromMilliseconds(500), Clock, ct);
         }
 
         return await predicate();
